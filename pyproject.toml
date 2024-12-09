@@ -1,0 +1,29 @@
+[project]
+name = "mdv"
+version = "0.0.1"
+description = "Multi-Dimension Viewer"
+authors = [
+    {name = "Shenhan Qian", email = "shenhan.qian@tum.de"}
+]
+requires-python = ">=3.6"
+license = {text = "MIT"}
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent"
+]
+dependencies = [
+    "dearpygui",
+    "tyro",
+]
+[project.scripts]
+mdv = "mdv:main.main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build]
+include = [
+    "mdv/**",
+]
