@@ -9,26 +9,27 @@ Navigate hierarchical data in multi dimensions with your keyboard and mouse (whe
 ## Data Structure
 ```
 <root_folder>
-|- <row_0>
-|       |- <col_0>
-|       |- <col_1>
+|- <level0_0>
+|       |- <level1_0>
+|       |       |- <level2_0>
+|       |       |- <level2_1>
+|       |       |- ...
+|       |
+|       |- <level1_1>
+|       |- <level1_2>
 |       |- ...
 |
-|- <row_1>
-|- <row_2>
+|- <level0_1>
+|- <level0_2>
 |- ...
 ```
 
-Current supported file type: 
-- images
+Navigate an arbitrary number of levels of folders and files. Current supporte file types:
+- images: jpg (jpeg), png
 
 More file types to support:
-- videos
 - meshes/point clouds
-
-More scenarios:
-- `<col>` is in a deeper level of `<row>`
-- More than two levels
+- videos
 
 <!-- <div align="center">
         <image src="./screenshot.png" height=800px></image>
