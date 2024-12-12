@@ -15,6 +15,9 @@ classifiers = [
 dependencies = [
     "dearpygui",
     "tyro",
+    "numpy",
+    "pillow",
+    "pyrender@git+https://github.com/ShenhanQian/pyrender@support-numpy-2",
 ]
 [project.scripts]
 mdv = "mdv:main.main"

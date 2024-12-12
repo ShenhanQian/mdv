@@ -1,11 +1,16 @@
 from pathlib import Path
-import numpy as np
-from PIL import Image
 from dataclasses import dataclass
+from typing import Annotated
 import tyro
 from tyro.conf import Positional
-from typing import Annotated
+import numpy as np
+from PIL import Image
+import pyrender
+import trimesh
+import threading
+import queue
 import dearpygui.dearpygui as dpg
+from .utils.camera import OrbitCamera
 
 
 @dataclass
@@ -16,12 +21,17 @@ class MultiDimensionViewerConfig:
     """Width of the GUI"""
     height: int = 720
     """Height of the GUI"""
-    scale: float = 1.0
+    scale: Annotated[float, tyro.conf.arg(aliases=["-s"])] = 1.0
     """Scale of the GUI"""
     rescale_depth_map: bool = True
     """Rescale depth map for visualization"""
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
     """Verbose mode"""
+    cam_radius: float = 1.0
+    """Radius of the camera orbit"""
+    cam_fovy: float = 90
+    """Field of view of the camera"""
+    cam_convention: str = "opengl"
     
 
 class MultiDimensionViewer(object):
@@ -33,10 +43,25 @@ class MultiDimensionViewer(object):
         self.rescale_depth_map = cfg.rescale_depth_map
         self.verbose = cfg.verbose
 
-        self.supported_types = ['jpg', 'jpeg', 'png']
+        self.types_image = ['jpg', 'jpeg', 'png']
+        self.types_mesh = ['obj', 'glb']
+        self.supported_types = self.types_image + self.types_mesh
         self.items_levels = {}
         self.active_level = 0
         self.selectable_width = 12 * self.scale
+        self.render_queue = queue.Queue()
+
+        self.scene = None
+        self.cam = OrbitCamera(self.width, self.height, r=cfg.cam_radius, fovy=cfg.cam_fovy, convention=cfg.cam_convention)
+
+        # buffers for mouse interaction
+        self.cursor_x = None
+        self.cursor_y = None
+        self.cursor_x_prev = None
+        self.cursor_y_prev = None
+        self.drag_begin_x = None
+        self.drag_begin_y = None
+        self.drag_button = None
 
         if self.root_folder.is_file():
             raise NotImplementedError("File is not supported yet.")
@@ -86,7 +111,7 @@ class MultiDimensionViewer(object):
                         dpg.add_button(label="<", callback=lambda sender, data: self.prev_item(sender, data), tag=f'button_left_level_{level}')
                         dpg.add_button(label=">", callback=lambda sender, data: self.next_item(sender, data), tag=f'button_right_level_{level}')
 
-                        dpg.add_selectable(width=self.selectable_width, default_value=level==self.active_level, tag=f'selectable_level_{level}')
+                        dpg.add_selectable(width=self.selectable_width, default_value=level==self.active_level, tag=f'selectable_level_{level}', callback=lambda sender, data: self.set_level(sender, data))
                         dpg.bind_item_theme(f'selectable_level_{level}', self.selectable_theme)
                 else:
                     dpg.configure_item(f'combo_level_{level}', items=items, default_value=selected)
@@ -167,7 +192,19 @@ class MultiDimensionViewer(object):
             dpg.add_key_press_handler(dpg.mvKey_Home, callback=self.set_item)
             dpg.add_key_press_handler(dpg.mvKey_End, callback=self.set_item)
             dpg.add_key_press_handler(dpg.mvKey_Escape, callback=lambda: dpg.stop_dearpygui())
-            dpg.add_mouse_wheel_handler(callback=self.on_mouse_wheel)
+
+            dpg.add_mouse_release_handler(callback=self.callback_mouse_release)
+            # dpg.add_mouse_drag_handler(callback=callback_mouse_drag)  # not using the drag callback, since it does not return the starting point
+            dpg.add_mouse_move_handler(callback=self.callback_mouse_move)
+            dpg.add_mouse_down_handler(callback=self.callback_mouse_button_down)
+            dpg.add_mouse_wheel_handler(callback=self.callback_mouse_wheel)
+
+            dpg.add_key_press_handler(dpg.mvKey_W, callback=self.callback_key_press, tag='_mvKey_W')
+            dpg.add_key_press_handler(dpg.mvKey_S, callback=self.callback_key_press, tag='_mvKey_S')
+            dpg.add_key_press_handler(dpg.mvKey_A, callback=self.callback_key_press, tag='_mvKey_A')
+            dpg.add_key_press_handler(dpg.mvKey_D, callback=self.callback_key_press, tag='_mvKey_D')
+            dpg.add_key_press_handler(dpg.mvKey_E, callback=self.callback_key_press, tag='_mvKey_E')
+            dpg.add_key_press_handler(dpg.mvKey_Q, callback=self.callback_key_press, tag='_mvKey_Q')
     
     def set_level(self, sender, data):
         self.active_level = int(sender.split('_')[-1])
@@ -207,6 +244,7 @@ class MultiDimensionViewer(object):
 
         self.update_items_under_level(level)
         self.update_button_states(level)
+        self.scene = None
         self.need_update = True
 
     def prev_item(self, sender, data):
@@ -235,14 +273,6 @@ class MultiDimensionViewer(object):
             if level == self.active_level:
                 dpg.set_value(f'slider_level', idx-1)
 
-    def on_mouse_wheel(self, sender, app_data):
-        for level in self.items_levels.keys():
-            if dpg.is_item_hovered(f'combo_level_{level}'):
-                if app_data > 0:
-                    self.prev_item(f'button_left_level_{level}', None)
-                else:
-                    self.next_item(f'button_right_level_{level}', None)
-
     def resize_windows(self):
         dpg.configure_item('viewer_tag', width=self.width, height=self.height)
         dpg.configure_item('navigator_tag', pos=[0, 0])
@@ -252,6 +282,93 @@ class MultiDimensionViewer(object):
         with dpg.texture_registry(show=False):
             dpg.add_raw_texture(width=self.width, height=self.height, default_value=np.zeros([self.height, self.width, 3]), format=dpg.mvFormat_Float_rgb, tag="texture_tag")
         dpg.add_image("texture_tag", tag='image_tag', parent='viewer_tag')
+        self.need_update = True
+    
+    def callback_mouse_move(self, sender, app_data):
+        self.cursor_x, self.cursor_y = app_data
+
+        if self.scene is None:
+            return
+
+        # drag
+        if self.drag_begin_x is not None or self.drag_begin_y is not None:
+            if self.cursor_x_prev is None or self.cursor_y_prev is None:
+                cursor_x_prev = self.drag_begin_x
+                cursor_y_prev = self.drag_begin_y
+            else:
+                cursor_x_prev = self.cursor_x_prev
+                cursor_y_prev = self.cursor_y_prev
+            
+            # drag with left button
+            if self.drag_button is dpg.mvMouseButton_Left:
+                k = 0.1
+                # rotate around X&Y axis
+                if self.width*k < self.drag_begin_x < self.width*(1-k) and self.height*k < self.drag_begin_y < self.height*(1-k):
+                    angle_x = np.radians(-0.3 * (self.cursor_y - cursor_y_prev))
+                    self.cam.orbit_x(angle_x)
+                    
+                    angle_y = np.radians(-0.3 * (self.cursor_x - cursor_x_prev))
+                    self.cam.orbit_y(angle_y)
+                # rotate around Z axis
+                else:
+                    xy_begin = np.array([self.cursor_x_prev - self.width//2, self.cursor_y_prev - self.height//2])
+                    xy_end = np.array([self.cursor_x - self.width//2, self.cursor_y - self.height//2])
+                    angle_z = np.arctan2(xy_end[1], xy_end[0]) - np.arctan2(xy_begin[1], xy_begin[0])
+                    self.cam.orbit_z(angle_z)
+            
+            # drag with middle button
+            elif self.drag_button in [dpg.mvMouseButton_Middle, dpg.mvMouseButton_Right]:
+                # Pan in X-Y plane
+                self.cam.pan(dx=self.cursor_x - cursor_x_prev, dy=self.cursor_y - cursor_y_prev)
+            self.need_update = True
+        
+        self.cursor_x_prev = self.cursor_x
+        self.cursor_y_prev = self.cursor_y
+
+    def callback_mouse_button_down(self, sender, app_data):
+        if not dpg.is_item_hovered("viewer_tag") or self.scene is None:
+            return
+        if self.drag_button != app_data[0]:
+            self.drag_begin_x = self.cursor_x
+            self.drag_begin_y = self.cursor_y
+            self.drag_button = app_data[0]
+    
+    def callback_mouse_release(self, sender, app_data):
+        self.drag_begin_x = None
+        self.drag_begin_y = None
+        self.drag_button = None
+        self.cursor_x_prev = None
+        self.cursor_y_prev = None
+
+    def callback_mouse_wheel(self, sender, app_data):
+        if dpg.is_item_hovered("viewer_tag") and self.scene is not None:
+            self.cam.scale(app_data)
+            self.need_update = True
+        else:
+            for level in self.items_levels.keys():
+                if dpg.is_item_hovered(f'combo_level_{level}'):
+                    if app_data > 0:
+                        self.prev_item(f'button_left_level_{level}', None)
+                    else:
+                        self.next_item(f'button_right_level_{level}', None)
+
+    def callback_key_press(self, sender, app_data):
+        if self.scene is None:
+            return
+        step = 30
+        if sender == '_mvKey_W':
+            self.cam.pan(dz=step)
+        elif sender == '_mvKey_S':
+            self.cam.pan(dz=-step)
+        elif sender == '_mvKey_A':
+            self.cam.pan(dx=step)
+        elif sender == '_mvKey_D':
+            self.cam.pan(dx=-step)
+        elif sender == '_mvKey_E':
+            self.cam.pan(dy=step)
+        elif sender == '_mvKey_Q':
+            self.cam.pan(dy=-step)
+
         self.need_update = True
 
     def run(self):
@@ -281,12 +398,33 @@ class MultiDimensionViewer(object):
                 dpg.set_value("texture_tag", np.zeros([self.height, self.width, 3]))
                 self.need_update = False
                 return
-            if 'jpg' not in str(path).lower() and 'jpeg' not in str(path).lower() and 'png' not in str(path).lower():
+            
+            suffix = path.suffix[1:].lower()
+            if suffix in self.types_image:
+                img = self.load_image(path)
+            elif suffix in self.types_mesh:
+                if self.scene is None:
+                    self.scene = self.load_scene(path)
+
+                    camera = pyrender.PerspectiveCamera(yfov=np.radians(self.cam.fovy))
+                    self.node_camera = self.scene.add(camera, pose=self.cam.pose)
+                    light = pyrender.DirectionalLight(color=np.ones(3), intensity=2.0)
+                    self.node_light = self.scene.add(light, pose=self.cam.pose)
+                else:
+                    self.scene.set_pose(self.node_camera, self.cam.pose)
+                    self.scene.set_pose(self.node_light, self.cam.pose)
+
+                if self.verbose:
+                    print(f"Render scene with camera pose:")
+                    print(self.cam.pose)
+
+                threading.Thread(target=self.render_mesh, args=[self.scene]).start()
+                img = self.render_queue.get()
+            else:
                 if self.verbose:
                     raise TypeError(f"Unsupported file type: {path}")
-          
-            # directly load as float32
-            img = self.load_image(path)
+
+            # rescale and pad
             img = img.astype(np.float32) / 255
             diff_height = (self.height - img.shape[0])
             pad_top = diff_height // 2
@@ -295,7 +433,7 @@ class MultiDimensionViewer(object):
             pad_left = diff_width // 2
             pad_right = diff_width - pad_left
             img = np.pad(img, ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)), mode='constant', constant_values=0)
-
+            assert img.shape[0] == self.height and img.shape[1] == self.width and img.shape[2] == 3, f"Image shape: {img.shape}"
             dpg.set_value("texture_tag", img)
             if self.verbose:
                 print(f"Updated texture with image shape: {img.shape}")
@@ -329,6 +467,24 @@ class MultiDimensionViewer(object):
         if img.ndim == 2:
             img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
         return img
+
+    def render_mesh(self, scene):
+        r = pyrender.OffscreenRenderer(self.height, self.width)
+        color, depth = r.render(scene)
+        self.render_queue.put(color)
+        return color
+
+    @staticmethod
+    def load_scene(file_path: Path):
+        scene = pyrender.Scene()
+        mesh = trimesh.load(file_path)
+        if Path(file_path).suffix == ".glb":
+            for k in mesh.geometry.keys():
+                mesh_k = mesh.geometry[k]
+                scene.add(pyrender.Mesh.from_trimesh(mesh_k))
+        else:
+            scene.add(pyrender.Mesh.from_trimesh(mesh))
+        return scene
 
     def update_button_states(self, level):
         if self.selected_per_level[level] == '-':
