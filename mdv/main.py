@@ -76,6 +76,10 @@ class MultiDimensionViewer(object):
             if update_widgets:
                 # add if not exist
                 if not dpg.does_item_exist(f'combo_level_{level}'):
+                    # check if slider exists
+                    if dpg.does_item_exist(f'slider_level'):
+                        dpg.delete_item(f'slider_level')
+
                     with dpg.group(horizontal=True, parent='navigator_tag', tag=f'group_level_{level}'):
                         dpg.add_combo(items, default_value=selected, height_mode=dpg.mvComboHeight_Large, callback=lambda sender, data: self.set_item(sender, data), tag=f'combo_level_{level}')
                         
@@ -87,7 +91,6 @@ class MultiDimensionViewer(object):
                 else:
                     dpg.configure_item(f'combo_level_{level}', items=items, default_value=selected)
                 self.update_button_states(level)
-            
             if self.verbose:
                 print(f"Update level {level} with item: {selected}")
         
@@ -98,6 +101,10 @@ class MultiDimensionViewer(object):
                 self.selected_per_level.pop(l)
             if update_widgets:
                 dpg.delete_item(f'group_level_{l}')
+        
+        if update_widgets:
+            if not dpg.does_item_exist(f'slider_level'):
+                dpg.add_slider_int(default_value=0, min_value=0, max_value=len(self.items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", self.items_levels[self.active_level][data]), parent='navigator_tag')
 
     def define_gui(self):
         dpg.create_context()
@@ -112,7 +119,8 @@ class MultiDimensionViewer(object):
 
         with dpg.theme() as self.selectable_theme:
             with dpg.theme_component(dpg.mvSelectable):
-                color = [227, 179, 65]
+                color = [227, 179, 65]  # light yellow
+                # color = [15, 86, 135]  # blue
                 color_hovered = [int(x*200/255) for x in color]
                 color_active = [int(x*150/255) for x in color]
                 dpg.add_theme_color(dpg.mvThemeCol_Header, color, category=dpg.mvThemeCat_Core)  # Change color here
@@ -121,7 +129,7 @@ class MultiDimensionViewer(object):
         
         with dpg.theme() as self.button_theme:
             with dpg.theme_component(dpg.mvButton):
-                color = [37, 37, 38]
+                color = [37, 37, 38]  # dark grey
                 color_hovered = [int(x*200/255) for x in color]
                 color_active = [int(x*150/255) for x in color]
                 dpg.add_theme_color(dpg.mvThemeCol_Button, color, category=dpg.mvThemeCat_Core)  # Change color here
@@ -137,18 +145,19 @@ class MultiDimensionViewer(object):
         dpg.bind_item_theme("viewer_tag", theme_no_padding)
 
         # navigator window
-        with dpg.window(label="Navigator", tag='navigator_tag', pos=[0, 0], autosize=True):
+        with dpg.window(label="Navigator", tag='navigator_tag', pos=[0, 0], autosize=True, no_close=True):
             for level, items in self.items_levels.items():
                 with dpg.group(horizontal=True, tag=f'group_level_{level}'):
-                    dpg.add_combo(items, default_value=self.selected_per_level[level], height_mode=dpg.mvComboHeight_Large, callback=lambda sender, data: self.set_item(sender, data), tag=f'combo_level_{level}')
-                    
+                    dpg.add_combo(items, default_value=self.selected_per_level[level], height_mode=dpg.mvComboHeight_Regular, callback=lambda sender, data: self.set_item(sender, data), tag=f'combo_level_{level}')
+
                     dpg.add_button(label="<", callback=lambda sender, data: self.prev_item(sender, data), tag=f'button_left_level_{level}')
                     dpg.add_button(label=">", callback=lambda sender, data: self.next_item(sender, data), tag=f'button_right_level_{level}')
                     self.update_button_states(level)
 
                     dpg.add_selectable(width=self.selectable_width, default_value=level==self.active_level, tag=f'selectable_level_{level}', callback=lambda sender, data: self.set_level(sender, data))
                     dpg.bind_item_theme(f'selectable_level_{level}', self.selectable_theme)
-        
+            dpg.add_slider_int(default_value=0, min_value=0, max_value=len(self.items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", self.items_levels[self.active_level][data]))
+
         # key press handlers
         with dpg.handler_registry():
             dpg.add_key_press_handler(dpg.mvKey_Up, callback=self.prev_level)
@@ -167,17 +176,17 @@ class MultiDimensionViewer(object):
         for level in self.items_levels.keys():
             dpg.set_value(f'selectable_level_{level}', level==self.active_level)
 
+        dpg.configure_item(f'slider_level', max_value=len(self.items_levels[self.active_level])-1)
+        if self.verbose:
+            print(f"Update slider with max value: {len(self.items_levels[self.active_level])-1}")
+
     def prev_level(self):
         if self.active_level > 0:
-            self.active_level -= 1
-            for level in self.items_levels.keys():
-                dpg.set_value(f'selectable_level_{level}', level==self.active_level)
+            self.set_level(f'selectable_level_{self.active_level-1}', None)
 
     def next_level(self):
         if self.active_level < len(self.items_levels) - 1:
-            self.active_level += 1
-            for level in self.items_levels.keys():
-                dpg.set_value(f'selectable_level_{level}', level==self.active_level)
+            self.set_level(f'selectable_level_{self.active_level+1}', None)
     
     def set_item(self, sender, data):
         if self.verbose:
@@ -210,6 +219,8 @@ class MultiDimensionViewer(object):
         idx = self.items_levels[level].index(self.selected_per_level[level])
         if idx > 0:
             self.set_item(sender, self.items_levels[level][idx-1])
+            if level == self.active_level:
+                dpg.set_value(f'slider_level', idx-1)
 
     def next_item(self, sender, data):
         if data == dpg.mvKey_Right:
@@ -221,6 +232,8 @@ class MultiDimensionViewer(object):
         idx = self.items_levels[level].index(self.selected_per_level[level])
         if idx < len(self.items_levels[level]) - 1:
             self.set_item(sender, self.items_levels[level][idx + 1])
+            if level == self.active_level:
+                dpg.set_value(f'slider_level', idx-1)
 
     def on_mouse_wheel(self, sender, app_data):
         for level in self.items_levels.keys():
