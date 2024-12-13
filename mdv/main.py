@@ -191,7 +191,7 @@ class MultiDimensionViewer(object):
                 # dpg.add_theme_color(dpg.mvThemeCol_ButtonActive, color_active, category=dpg.mvThemeCat_Core)
 
         with dpg.texture_registry(show=False):
-            dpg.add_raw_texture(width=self.width, height=self.height, default_value=np.zeros([self.height, self.width, 3]), format=dpg.mvFormat_Float_rgb, tag="texture_tag")
+            dpg.add_raw_texture(width=self.width, height=self.height, default_value=np.zeros([self.height, self.width, 4]), format=dpg.mvFormat_Float_rgba, tag="texture_tag")
 
         # viewer window
         with dpg.window(label="Viewer", pos=[0, 0], tag='viewer_tag', width=self.width, height=self.height, no_title_bar=True, no_move=True, no_bring_to_front_on_focus=True):
@@ -322,16 +322,17 @@ class MultiDimensionViewer(object):
         dpg.delete_item('texture_tag')
         dpg.delete_item('image_tag')
         with dpg.texture_registry(show=False):
-            dpg.add_raw_texture(width=self.width, height=self.height, default_value=np.zeros([self.height, self.width, 3]), format=dpg.mvFormat_Float_rgb, tag="texture_tag")
+            dpg.add_raw_texture(width=self.width, height=self.height, default_value=np.zeros([self.height, self.width, 4]), format=dpg.mvFormat_Float_rgba, tag="texture_tag")
         dpg.add_image("texture_tag", tag='image_tag', parent='viewer_tag')
         self.prefetch_cache = {}
         self.need_update = True
 
         # restart thread to update rendering resolution
-        self.render_input_queue.put(None)
-        self.mesh_render_thread.join()
-        self.mesh_render_thread = threading.Thread(target=self.mesh_render_loop)
-        self.mesh_render_thread.start()
+        if self.mesh_render_thread is not None:
+            self.render_input_queue.put(None)
+            self.mesh_render_thread.join()
+            self.mesh_render_thread = threading.Thread(target=self.mesh_render_loop)
+            self.mesh_render_thread.start()
     
     def callback_mouse_move(self, sender, app_data):
         self.cursor_x, self.cursor_y = app_data
@@ -464,7 +465,7 @@ class MultiDimensionViewer(object):
         # try:
         path = self.get_absolate_path(self.selected_per_level, len(self.selected_per_level)-1)
         if path.name == '-':
-            dpg.set_value("texture_tag", np.zeros([self.height, self.width, 3]))
+            dpg.set_value("texture_tag", np.zeros([self.height, self.width, 4]))
             self.need_update = False
             return
         
@@ -502,8 +503,9 @@ class MultiDimensionViewer(object):
             self.render_input_queue.put(self.scene)
             self.io_busy = False
             img = self.render_ouput_queue.get()
+            img = np.concatenate([img, np.ones([img.shape[0], img.shape[1], 1]) * 255], axis=2)
         else:
-            img = np.zeros([self.height, self.width, 3])
+            img = np.zeros([self.height, self.width, 4])
             if self.verbose:
                 raise TypeError(f"Unsupported file type: {path}")
         
@@ -519,7 +521,7 @@ class MultiDimensionViewer(object):
         pad_left = diff_width // 2
         pad_right = diff_width - pad_left
         img = np.pad(img, ((pad_top, pad_bottom), (pad_left, pad_right), (0, 0)), mode='constant', constant_values=0)
-        assert img.shape[0] == self.height and img.shape[1] == self.width and img.shape[2] == 3, f"Image shape: {img.shape}"
+        assert img.shape[0] == self.height and img.shape[1] == self.width and img.shape[2] == 4, f"Image shape: {img.shape}"
         dpg.set_value("texture_tag", img)
         if self.verbose:
             print(f"Updated texture with image shape: {img.shape}")
@@ -577,8 +579,8 @@ class MultiDimensionViewer(object):
             print(f"Load image: {path}, size: {img.size}, mode: {img.mode}")
         
         # turn RGBA to RGB if needed
-        if img.mode == 'RGBA':
-            img = img.convert('RGB')
+        if img.mode == 'RGB':
+            img = img.convert('RGBA')
         # Handle 16-bit depth images
         if img.mode == 'I;16':
             img = np.array(img, dtype=np.uint16)
@@ -593,7 +595,7 @@ class MultiDimensionViewer(object):
         img = img.resize((int(img.width * scale), int(img.height * scale)), resample)
         img = np.asarray(img)
         if img.ndim == 2:
-            img = np.repeat(img[:, :, np.newaxis], 3, axis=2)
+            img = np.repeat(img[:, :, np.newaxis], 4, axis=2)
         return img
 
     def mesh_render_loop(self):

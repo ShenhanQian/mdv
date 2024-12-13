@@ -30,3 +30,6 @@ build-backend = "hatchling.build"
 include = [
     "mdv/**",
 ]
+
+[tool.hatch.metadata]
+allow-direct-references = true
