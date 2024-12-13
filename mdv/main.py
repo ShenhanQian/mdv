@@ -7,8 +7,8 @@ import numpy as np
 from PIL import Image
 import pyrender
 import trimesh
+import multiprocessing as mp
 import threading
-import queue
 import dearpygui.dearpygui as dpg
 from .utils.camera import OrbitCamera
 
@@ -69,9 +69,9 @@ class MultiDimensionViewer(object):
         # self.prefetch_thread = threading.Thread(target=self.prefetch_loop).start()
 
         # mesh rendering
-        self.render_input_queue = queue.Queue()
-        self.render_ouput_queue = queue.Queue()
-        self.mesh_render_thread = None
+        self.render_input_queue = mp.Queue()
+        self.render_output_queue = mp.Queue()
+        self.mesh_render_process = None
         self.scene = None
         self.cam = OrbitCamera(self.width, self.height, r=cfg.cam_radius, fovy=cfg.cam_fovy, convention=cfg.cam_convention)
 
@@ -137,28 +137,12 @@ class MultiDimensionViewer(object):
                 selected_per_level.pop(l)
             if update_widgets:
                 dpg.delete_item(f'group_level_{l}')
+        if self.active_level not in items_levels:
+            self.set_level(f'selectable_level_{level}', None)
         
         if update_widgets:
             if not dpg.does_item_exist(f'slider_level'):
                 dpg.add_slider_int(default_value=0, min_value=0, max_value=len(items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", items_levels[self.active_level][data]), parent='navigator_tag')
-
-    def search_items_under_level(self, level, update_widgets=True):
-        while self.get_absolate_path(self.selected_per_level, level).is_dir():
-            level += 1
-
-            base_path = self.get_absolate_path(self.selected_per_level, level-1)
-
-            items = sorted([x.name for x in base_path.iterdir() if x.is_dir() or x.suffix[1:] in self.supported_types])
-            self.items_levels.update({level: items})
-
-            if level in self.selected_per_level and self.selected_per_level[level] in items:
-                selected = self.selected_per_level[level]
-            else:
-                if len(items) > 0:
-                    selected = items[0]
-                else:
-                    selected = '-'
-            self.selected_per_level.update({level: selected})
 
     def define_gui(self):
         dpg.create_context()
@@ -328,11 +312,11 @@ class MultiDimensionViewer(object):
         self.need_update = True
 
         # restart thread to update rendering resolution
-        if self.mesh_render_thread is not None:
+        if self.mesh_render_process is not None:
             self.render_input_queue.put(None)
-            self.mesh_render_thread.join()
-            self.mesh_render_thread = threading.Thread(target=self.mesh_render_loop)
-            self.mesh_render_thread.start()
+            self.mesh_render_process.join()
+            self.mesh_render_process = mp.Process(target=self.mesh_render_loop)
+            self.mesh_render_process.start()
     
     def callback_mouse_move(self, sender, app_data):
         self.cursor_x, self.cursor_y = app_data
@@ -455,9 +439,9 @@ class MultiDimensionViewer(object):
             self.update_viewer()
             dpg.render_dearpygui_frame()
         dpg.destroy_context()
-        if self.mesh_render_thread is not None:
+        if self.mesh_render_process is not None:
             self.render_input_queue.put(None)
-            self.mesh_render_thread.join()
+            self.mesh_render_process.join()
     
     def update_viewer(self):
         if not self.need_update:
@@ -489,9 +473,9 @@ class MultiDimensionViewer(object):
                 light = pyrender.DirectionalLight(color=np.ones(3), intensity=2.0)
                 self.node_light = self.scene.add(light, pose=self.cam.pose)
 
-                if self.mesh_render_thread is None:
-                    self.mesh_render_thread = threading.Thread(target=self.mesh_render_loop)
-                    self.mesh_render_thread.start()
+                if self.mesh_render_process is None:
+                    self.mesh_render_process = mp.Process(target=self.mesh_render_loop)
+                    self.mesh_render_process.start()
             else:
                 self.scene.set_pose(self.node_camera, self.cam.pose)
                 self.scene.set_pose(self.node_light, self.cam.pose)
@@ -502,7 +486,7 @@ class MultiDimensionViewer(object):
 
             self.render_input_queue.put(self.scene)
             self.io_busy = False
-            img = self.render_ouput_queue.get()
+            img = self.render_output_queue.get()
             img = np.concatenate([img, np.ones([img.shape[0], img.shape[1], 1]) * 255], axis=2)
         else:
             img = np.zeros([self.height, self.width, 4])
@@ -599,7 +583,7 @@ class MultiDimensionViewer(object):
         return img
 
     def mesh_render_loop(self):
-        r = pyrender.OffscreenRenderer(self.width, self.height)  # Initialize in the thread
+        r = pyrender.OffscreenRenderer(self.width, self.height)  # Initialize in the process
         while True:
             scene = self.render_input_queue.get()
             if scene is None:
@@ -607,10 +591,7 @@ class MultiDimensionViewer(object):
 
             # Process the task
             color, depth = r.render(scene)
-            self.render_ouput_queue.put(color)
-
-            # Notify task completion if needed
-            self.render_input_queue.task_done()
+            self.render_output_queue.put(color)
 
     @staticmethod
     def load_scene(file_path: Path):
