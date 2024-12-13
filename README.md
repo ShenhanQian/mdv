@@ -29,8 +29,13 @@ Navigate an arbitrary number of levels of folders and files. Current supporte fi
 - meshes: obj, glb
 
 More file types to support:
-- point clouds
+- point clouds (ply)
 - videos
+
+More functionalities to come:
+- zoomin/out for images
+- adjust light intensity for meshes
+- point cloud sequence
 
 ## Installation
 
@@ -45,3 +50,7 @@ mdv <root_folder>
 ```
 
 Run with`-h` to see all arguments.
+
+## Dependancy
+- DearPyGUI
+- PyRender 

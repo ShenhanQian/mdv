@@ -29,7 +29,7 @@ class MultiDimensionViewerConfig:
     """Verbose mode"""
     cam_radius: float = 1.0
     """Radius of the camera orbit"""
-    cam_fovy: float = 60
+    cam_fovy: float = 45
     """Field of view of the camera"""
     cam_convention: str = "opengl"
     
@@ -43,16 +43,35 @@ class MultiDimensionViewer(object):
         self.rescale_depth_map = cfg.rescale_depth_map
         self.verbose = cfg.verbose
 
+        # files types
         self.types_image = ['jpg', 'jpeg', 'png']
         self.types_mesh = ['obj', 'glb']
         self.supported_types = self.types_image + self.types_mesh
-        self.items_levels = {}
-        self.active_level = 0
+
+        # styles
         self.selectable_width = 12 * self.scale
+
+        # database
+        self.active_level = 0
+        self.items_levels = {}
+        if self.root_folder.is_file():
+            raise NotImplementedError("File is not supported yet.")
+        elif self.root_folder.is_dir():
+            items = sorted([x.name for x in self.root_folder.iterdir() if x.is_dir() or x.suffix[1:] in self.supported_types])
+            self.items_levels.update({0: items})
+        self.selected_per_level = {self.active_level: self.items_levels[self.active_level][0]}
+        self.update_items_under_level(self.selected_per_level, self.items_levels, self.active_level, update_widgets=False)
+        
+        # prefetch
+        self.prefetch_cache = {}
+        self.need_prefetch = True
+        self.io_busy = False
+        # self.prefetch_thread = threading.Thread(target=self.prefetch_loop).start()
+
+        # mesh rendering
         self.render_input_queue = queue.Queue()
         self.render_ouput_queue = queue.Queue()
         self.mesh_render_thread = None
-
         self.scene = None
         self.cam = OrbitCamera(self.width, self.height, r=cfg.cam_radius, fovy=cfg.cam_fovy, convention=cfg.cam_convention)
 
@@ -65,41 +84,31 @@ class MultiDimensionViewer(object):
         self.drag_begin_y = None
         self.drag_button = None
 
-        if self.root_folder.is_file():
-            raise NotImplementedError("File is not supported yet.")
-        elif self.root_folder.is_dir():
-            items = sorted([x.name for x in self.root_folder.iterdir() if x.is_dir() or x.suffix[1:] in self.supported_types])
-            self.items_levels.update({0: items})
-        
-        self.selected_per_level = {self.active_level: self.items_levels[self.active_level][0]}
-
-        self.update_items_under_level(self.active_level, update_widgets=False)
-
-    def get_selected_absolate_path(self, level):
+    def get_absolate_path(self, selected_per_level, level):
         path = self.root_folder
         for i in range(level+1):
-            if self.selected_per_level[i] is None:
+            if selected_per_level[i] is None:
                 return Path('-')
-            path = path / self.selected_per_level[i]
+            path = path / selected_per_level[i]
         return path
     
-    def update_items_under_level(self, level, update_widgets=True):
-        while self.get_selected_absolate_path(level).is_dir():
+    def update_items_under_level(self, selected_per_level, items_levels, level, update_widgets=True):
+        while self.get_absolate_path(selected_per_level, level).is_dir():
             level += 1
 
-            base_path = self.get_selected_absolate_path(level-1)
+            base_path = self.get_absolate_path(selected_per_level, level-1)
 
             items = sorted([x.name for x in base_path.iterdir() if x.is_dir() or x.suffix[1:] in self.supported_types])
-            self.items_levels.update({level: items})
+            items_levels.update({level: items})
 
-            if level in self.selected_per_level and self.selected_per_level[level] in items:
-                selected = self.selected_per_level[level]
+            if level in selected_per_level and selected_per_level[level] in items:
+                selected = selected_per_level[level]
             else:
                 if len(items) > 0:
                     selected = items[0]
                 else:
                     selected = '-'
-            self.selected_per_level.update({level: selected})
+            selected_per_level.update({level: selected})
             if update_widgets:
                 # add if not exist
                 if not dpg.does_item_exist(f'combo_level_{level}'):
@@ -121,17 +130,35 @@ class MultiDimensionViewer(object):
             if self.verbose:
                 print(f"Update level {level} with item: {selected}")
         
-        for l in range(level+1, len(self.items_levels)):
-            if l in self.items_levels:
-                self.items_levels.pop(l)
-            if l in self.selected_per_level:
-                self.selected_per_level.pop(l)
+        for l in range(level+1, len(items_levels)):
+            if l in items_levels:
+                items_levels.pop(l)
+            if l in selected_per_level:
+                selected_per_level.pop(l)
             if update_widgets:
                 dpg.delete_item(f'group_level_{l}')
         
         if update_widgets:
             if not dpg.does_item_exist(f'slider_level'):
-                dpg.add_slider_int(default_value=0, min_value=0, max_value=len(self.items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", self.items_levels[self.active_level][data]), parent='navigator_tag')
+                dpg.add_slider_int(default_value=0, min_value=0, max_value=len(items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", items_levels[self.active_level][data]), parent='navigator_tag')
+
+    def search_items_under_level(self, level, update_widgets=True):
+        while self.get_absolate_path(self.selected_per_level, level).is_dir():
+            level += 1
+
+            base_path = self.get_absolate_path(self.selected_per_level, level-1)
+
+            items = sorted([x.name for x in base_path.iterdir() if x.is_dir() or x.suffix[1:] in self.supported_types])
+            self.items_levels.update({level: items})
+
+            if level in self.selected_per_level and self.selected_per_level[level] in items:
+                selected = self.selected_per_level[level]
+            else:
+                if len(items) > 0:
+                    selected = items[0]
+                else:
+                    selected = '-'
+            self.selected_per_level.update({level: selected})
 
     def define_gui(self):
         dpg.create_context()
@@ -216,10 +243,20 @@ class MultiDimensionViewer(object):
         for level in self.items_levels.keys():
             dpg.set_value(f'selectable_level_{level}', level==self.active_level)
 
-        dpg.configure_item(f'slider_level', max_value=len(self.items_levels[self.active_level])-1)
-        dpg.set_value(f'slider_level', self.items_levels[self.active_level].index(self.selected_per_level[self.active_level]))
+        if len(self.items_levels[self.active_level]) > 0:
+            max_value = len(self.items_levels[self.active_level]) - 1
+            slider_value = self.items_levels[self.active_level].index(self.selected_per_level[self.active_level])
+        else:
+            max_value = 0
+            slider_value = 0
+        dpg.configure_item(f'slider_level', max_value=max_value)
+        dpg.set_value(f'slider_level', slider_value)
         if self.verbose:
             print(f"Update slider with max value: {len(self.items_levels[self.active_level])-1}")
+
+        self.need_prefetch = True
+        if self.need_prefetch:
+            threading.Thread(target=self.prefetch_loop).start()
 
     def prev_level(self):
         if self.active_level > 0:
@@ -243,10 +280,11 @@ class MultiDimensionViewer(object):
             level = int(sender.split('_')[-1])
         self.selected_per_level[level] = data
         dpg.set_value(f'combo_level_{level}', data)
+        self.need_prefetch = True
         if self.verbose:
             print(f"Set level {level} with item: {data}")
 
-        self.update_items_under_level(level)
+        self.update_items_under_level(self.selected_per_level, self.items_levels, level)
         self.update_button_states(level)
         self.scene = None
         self.need_update = True
@@ -286,7 +324,14 @@ class MultiDimensionViewer(object):
         with dpg.texture_registry(show=False):
             dpg.add_raw_texture(width=self.width, height=self.height, default_value=np.zeros([self.height, self.width, 3]), format=dpg.mvFormat_Float_rgb, tag="texture_tag")
         dpg.add_image("texture_tag", tag='image_tag', parent='viewer_tag')
+        self.prefetch_cache = {}
         self.need_update = True
+
+        # restart thread to update rendering resolution
+        self.render_input_queue.put(None)
+        self.mesh_render_thread.join()
+        self.mesh_render_thread = threading.Thread(target=self.mesh_render_loop)
+        self.mesh_render_thread.start()
     
     def callback_mouse_move(self, sender, app_data):
         self.cursor_x, self.cursor_y = app_data
@@ -417,18 +462,26 @@ class MultiDimensionViewer(object):
         if not self.need_update:
             return
         # try:
-        path = self.get_selected_absolate_path(len(self.selected_per_level)-1)
+        path = self.get_absolate_path(self.selected_per_level, len(self.selected_per_level)-1)
         if path.name == '-':
             dpg.set_value("texture_tag", np.zeros([self.height, self.width, 3]))
             self.need_update = False
             return
         
+        self.io_busy = True  # prevent prefetching while loading thec current file
         suffix = path.suffix[1:].lower()
         if suffix in self.types_image:
-            img = self.load_image(path)
+            if path in self.prefetch_cache:
+                img = self.prefetch_cache[path]
+            else:
+                img = self.load_image(path)
+            self.io_busy = False
         elif suffix in self.types_mesh:
             if self.scene is None:
-                self.scene = self.load_scene(path)
+                if path in self.prefetch_cache:
+                    self.scene = self.prefetch_cache[path]
+                else:
+                    self.scene = self.load_scene(path)
 
                 camera = pyrender.PerspectiveCamera(yfov=np.radians(self.cam.fovy))
                 self.node_camera = self.scene.add(camera, pose=self.cam.pose)
@@ -447,13 +500,17 @@ class MultiDimensionViewer(object):
                 print(self.cam.pose)
 
             self.render_input_queue.put(self.scene)
+            self.io_busy = False
             img = self.render_ouput_queue.get()
         else:
             img = np.zeros([self.height, self.width, 3])
             if self.verbose:
                 raise TypeError(f"Unsupported file type: {path}")
+        
+        if self.need_prefetch:
+            threading.Thread(target=self.prefetch_loop).start()
             
-        # rescale and pad
+        # pad
         img = img.astype(np.float32) / 255
         diff_height = (self.height - img.shape[0])
         pad_top = diff_height // 2
@@ -468,9 +525,51 @@ class MultiDimensionViewer(object):
             print(f"Updated texture with image shape: {img.shape}")
 
         self.need_update = False
-        # except Exception as e:
-        #     dpg.set_value("texture_tag", np.zeros([self.height, self.width, 3]))
-        #     print("Exception:", e)
+
+    def prefetch_loop(self):
+        # prevent prefetching while loading thec current file
+        if self.io_busy:
+            return
+        if len(self.items_levels[self.active_level]) == 0:
+            self.need_prefetch = False
+            return
+        idx = self.items_levels[self.active_level].index(self.selected_per_level[self.active_level])
+
+        if idx < len(self.items_levels[self.active_level]) - 1:
+            items_levels_tmp = self.items_levels.copy()
+            selected_per_level_tmp = self.selected_per_level.copy()
+            selected_per_level_tmp[self.active_level] = self.items_levels[self.active_level][idx + 1]
+            self.update_items_under_level(selected_per_level_tmp, items_levels_tmp, self.active_level, update_widgets=False)
+
+            next_path = self.get_absolate_path(selected_per_level_tmp, len(selected_per_level_tmp)-1)
+            if next_path not in self.prefetch_cache:
+                suffix = next_path.suffix[1:].lower()
+                if suffix in self.types_image:
+                    self.prefetch_cache[next_path] = self.load_image(next_path)
+                elif suffix in self.types_mesh:
+                    scene = self.load_scene(next_path)
+                    self.prefetch_cache[next_path] = scene
+                if self.verbose:
+                    print(f"Prefetch next path: {next_path}")
+    
+        if idx > 0:
+            items_levels_tmp = self.items_levels.copy()
+            selected_per_level_tmp = self.selected_per_level.copy()
+            selected_per_level_tmp[self.active_level] = self.items_levels[self.active_level][idx - 1]
+            self.update_items_under_level(selected_per_level_tmp, items_levels_tmp, self.active_level, update_widgets=False)
+
+            prev_path = self.get_absolate_path(selected_per_level_tmp, len(selected_per_level_tmp)-1)
+            if prev_path not in self.prefetch_cache:
+                suffix = prev_path.suffix[1:].lower()
+                if suffix in self.types_image:
+                    self.prefetch_cache[prev_path] = self.load_image(prev_path)
+                elif suffix in self.types_mesh:
+                    scene = self.load_scene(prev_path)
+                    self.prefetch_cache[prev_path] = scene
+                if self.verbose:
+                    print(f"Prefetch previous path: {prev_path}")
+
+        self.need_prefetch = False
 
     def load_image(self, path, resample=Image.BILINEAR):
         img = Image.open(path)
