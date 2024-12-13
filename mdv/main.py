@@ -1,6 +1,6 @@
 from pathlib import Path
-from dataclasses import dataclass
-from typing import Annotated
+from dataclasses import dataclass, field
+from typing import Annotated, Literal
 import tyro
 from tyro.conf import Positional
 import numpy as np
@@ -23,6 +23,8 @@ class MultiDimensionViewerConfig:
     """Height of the GUI"""
     scale: Annotated[float, tyro.conf.arg(aliases=["-s"])] = 1.0
     """Scale of the GUI"""
+    types: Annotated[Literal["image", "mesh"], tyro.conf.arg(aliases=["-t"])] = field(default_factory=lambda: ["image", "mesh"])
+    """Types of files to be displayed"""
     rescale_depth_map: bool = True
     """Rescale depth map for visualization"""
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
@@ -49,7 +51,11 @@ class MultiDimensionViewer(object):
         # files types
         self.types_image = ['jpg', 'jpeg', 'png']
         self.types_mesh = ['obj', 'glb']
-        self.supported_types = self.types_image + self.types_mesh
+        self.supported_types = []
+        if 'image' in cfg.types:
+            self.supported_types += self.types_image
+        if 'mesh' in cfg.types:
+            self.supported_types += self.types_mesh
 
         # styles
         self.selectable_width = 12 * self.scale
