@@ -26,15 +26,14 @@ Navigate hierarchical data in multi dimensions with your keyboard and mouse (whe
 
 Navigate an arbitrary number of levels of folders and files. Current supporte file types:
 - images: jpg (jpeg), png
-- meshes: obj, glb
+- meshes: obj, glb, ply
 
 More file types to support:
-- point clouds (ply)
 - videos
+- point cloud sequence
 
 More functionalities to come:
 - zoomin/out for images
-- point cloud sequence
 
 ## Installation
 
