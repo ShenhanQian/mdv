@@ -34,7 +34,6 @@ More file types to support:
 
 More functionalities to come:
 - zoomin/out for images
-- adjust light intensity for meshes
 - point cloud sequence
 
 ## Installation
@@ -50,6 +49,19 @@ mdv <root_folder>
 ```
 
 Run with`-h` to see all arguments.
+
+### Mesh Viewer
+|Key|Action                   |
+| - | -                       |
+|`w`|camera move forward      |
+|`s`|camera move backward     |
+|`a`|camera move left         |
+|`d`|camera move right        |
+|`e`|camera move up           |
+|`q`|camera move down         |
+|`r`|reset camera pose        |
+|`[`|decrease light intensity |
+|`]`|increase light intensity |
 
 ## Dependancy
 - DearPyGUI

@@ -32,6 +32,9 @@ class MultiDimensionViewerConfig:
     cam_fovy: float = 45
     """Field of view of the camera"""
     cam_convention: str = "opengl"
+    """Camera convention"""
+    light_intensity: float = 10.
+    """Light intensity"""
     
 
 class MultiDimensionViewer(object):
@@ -74,6 +77,7 @@ class MultiDimensionViewer(object):
         self.mesh_render_process = None
         self.scene = None
         self.cam = OrbitCamera(self.width, self.height, r=cfg.cam_radius, fovy=cfg.cam_fovy, convention=cfg.cam_convention)
+        self.light_intensity = cfg.light_intensity
 
         # buffers for mouse interaction
         self.cursor_x = None
@@ -219,6 +223,8 @@ class MultiDimensionViewer(object):
             dpg.add_key_press_handler(dpg.mvKey_E, callback=self.callback_key_press, tag='_mvKey_E')
             dpg.add_key_press_handler(dpg.mvKey_Q, callback=self.callback_key_press, tag='_mvKey_Q')
             dpg.add_key_press_handler(dpg.mvKey_R, callback=self.callback_key_press, tag='_mvKey_R')
+            dpg.add_key_press_handler(dpg.mvKey_Open_Brace, callback=self.callback_key_press, tag='_mvKey_Open_Brace')
+            dpg.add_key_press_handler(dpg.mvKey_Close_Brace, callback=self.callback_key_press, tag='_mvKey_Close_Brace')
     
     def set_level(self, sender, data):
         self.active_level = int(sender.split('_')[-1])
@@ -419,6 +425,10 @@ class MultiDimensionViewer(object):
             self.cam.pan(dy=-step)
         elif sender == '_mvKey_R':
             self.cam.reset()
+        elif sender == '_mvKey_Open_Brace':
+            self.light_intensity /= 2
+        elif sender == '_mvKey_Close_Brace':
+            self.light_intensity *= 2
 
         self.need_update = True
 
@@ -470,8 +480,8 @@ class MultiDimensionViewer(object):
 
                 camera = pyrender.PerspectiveCamera(yfov=np.radians(self.cam.fovy))
                 self.node_camera = self.scene.add(camera, pose=self.cam.pose)
-                light = pyrender.DirectionalLight(color=np.ones(3), intensity=2.0)
-                self.node_light = self.scene.add(light, pose=self.cam.pose)
+                self.light = pyrender.DirectionalLight(color=np.ones(3), intensity=self.light_intensity)
+                self.node_light = self.scene.add(self.light, pose=self.cam.pose)
 
                 if self.mesh_render_process is None:
                     self.mesh_render_process = mp.Process(target=self.mesh_render_loop)
@@ -479,6 +489,7 @@ class MultiDimensionViewer(object):
             else:
                 self.scene.set_pose(self.node_camera, self.cam.pose)
                 self.scene.set_pose(self.node_light, self.cam.pose)
+                self.light.intensity = self.light_intensity
 
             if self.verbose:
                 print(f"Render scene with camera pose:")
