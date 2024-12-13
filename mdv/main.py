@@ -50,7 +50,7 @@ class MultiDimensionViewer(object):
 
         # files types
         self.types_image = ['jpg', 'jpeg', 'png']
-        self.types_mesh = ['obj', 'glb']
+        self.types_mesh = ['obj', 'glb', 'ply']
         self.supported_types = []
         if 'image' in cfg.types:
             self.supported_types += self.types_image
@@ -619,7 +619,11 @@ class MultiDimensionViewer(object):
                 mesh_k = mesh.geometry[k]
                 scene.add(pyrender.Mesh.from_trimesh(mesh_k))
         else:
-            scene.add(pyrender.Mesh.from_trimesh(mesh))
+            if isinstance(mesh, trimesh.points.PointCloud):
+                mesh = pyrender.Mesh.from_points(mesh.vertices, colors=mesh.colors)
+            else:
+                mesh = pyrender.Mesh.from_trimesh(mesh)
+            scene.add(mesh)
         return scene
 
     def update_button_states(self, level):
