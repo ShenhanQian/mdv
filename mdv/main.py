@@ -252,7 +252,13 @@ class MultiDimensionViewer(object):
             print(f"sender: {sender}, data: {data}, active_level: {self.active_level}")
         for level in self.items_levels.keys():
             dpg.set_value(f'selectable_level_{level}', level==self.active_level)
+        self.update_slider()
 
+        self.need_prefetch = True
+        if self.need_prefetch:
+            threading.Thread(target=self.prefetch_loop).start()
+    
+    def update_slider(self):
         if len(self.items_levels[self.active_level]) > 0:
             max_value = len(self.items_levels[self.active_level]) - 1
             slider_value = self.selected_idx_levels[self.active_level]
@@ -263,10 +269,6 @@ class MultiDimensionViewer(object):
         dpg.set_value(f'slider_level', slider_value)
         if self.verbose:
             print(f"Update slider with max value: {len(self.items_levels[self.active_level])-1}")
-
-        self.need_prefetch = True
-        if self.need_prefetch:
-            threading.Thread(target=self.prefetch_loop).start()
 
     def prev_level(self):
         if self.active_level > 0:
@@ -313,6 +315,7 @@ class MultiDimensionViewer(object):
         idx = self.selected_idx_levels[level]
         if idx > 0:
             self.set_item(sender, self.items_levels[level][idx-1])
+            self.update_slider()
 
     def next_item(self, sender, data):
         if data == dpg.mvKey_Right:
@@ -324,6 +327,7 @@ class MultiDimensionViewer(object):
         idx = self.selected_idx_levels[level]
         if idx < len(self.items_levels[level]) - 1:
             self.set_item(sender, self.items_levels[level][idx+1])
+            self.update_slider()
 
     def resize_windows(self):
         dpg.configure_item('viewer_tag', width=self.width, height=self.height)
@@ -420,6 +424,11 @@ class MultiDimensionViewer(object):
             self.cam.scale(app_data)
             self.need_update = True
         else:
+            if dpg.is_item_hovered(f'slider_level'):
+                if app_data > 0:
+                    self.prev_item(f'button_left_level_{self.active_level}', None)
+                else:
+                    self.next_item(f'button_right_level_{self.active_level}', None)
             for level in self.items_levels.keys():
                 if dpg.is_item_hovered(f'combo_level_{level}'):
                     if app_data > 0:
