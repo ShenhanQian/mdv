@@ -1,6 +1,6 @@
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Annotated, Literal
+from typing import Annotated, Literal, List
 import tyro
 from tyro.conf import Positional
 import numpy as np
@@ -25,6 +25,8 @@ class MultiDimensionViewerConfig:
     """Scale of the GUI"""
     types: Annotated[Literal["image", "mesh"], tyro.conf.arg(aliases=["-t"])] = field(default_factory=lambda: ["image", "mesh"])
     """Types of files to be displayed"""
+    exclude_suffixes: Annotated[List, tyro.conf.arg(aliases=["-e"])] = field(default_factory=lambda: [])
+    """Exclude files with these suffixes"""
     rescale_depth_map: bool = True
     """Rescale depth map for visualization"""
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
@@ -50,12 +52,8 @@ class MultiDimensionViewer(object):
         # files types
         self.types_image = ['jpg', 'jpeg', 'png']
         self.types_mesh = ['obj', 'glb', 'ply']
-        self.types_txt = ['txt', 'json', 'csv', 'sh']
-        self.supported_types = []
-        if 'image' in cfg.types:
-            self.supported_types += self.types_image
-        if 'mesh' in cfg.types:
-            self.supported_types += self.types_mesh
+        # self.types_txt = ['txt', 'json', 'csv', 'sh']
+        self.exclude_suffixes = cfg.exclude_suffixes
 
         # styles
         self.selectable_width = 12 * self.scale
@@ -66,7 +64,7 @@ class MultiDimensionViewer(object):
         if self.root_folder.is_file():
             raise NotImplementedError("File is not supported yet.")
         elif self.root_folder.is_dir():
-            items = sorted([x.name for x in self.root_folder.iterdir()])
+            items = sorted([x.name for x in self.root_folder.iterdir() if x.is_dir() or x.suffix[1:].lower() not in self.exclude_suffixes])
             self.items_levels.update({0: items})
         self.selected_idx_levels = {self.active_level: 0}
         self.update_items_under_level(self.selected_idx_levels, self.items_levels, self.active_level, update_widgets=False)
@@ -108,7 +106,7 @@ class MultiDimensionViewer(object):
         while base_path.is_dir():
             level += 1
 
-            items = sorted([x.name for x in base_path.iterdir()])
+            items = sorted([x.name for x in base_path.iterdir() if x.is_dir() or x.suffix[1:].lower() not in self.exclude_suffixes])
 
             if level in selected_idx_levels:
                 try:
@@ -428,12 +426,15 @@ class MultiDimensionViewer(object):
                     self.prev_item(f'button_left_level_{self.active_level}', None)
                 else:
                     self.next_item(f'button_right_level_{self.active_level}', None)
+
             for level in self.items_levels.keys():
                 if dpg.is_item_hovered(f'combo_level_{level}'):
+                    self.set_level(f'selectable_level_{level}', None)
+            
                     if app_data > 0:
-                        self.prev_item(f'button_left_level_{level}', None)
+                        self.prev_item(f'button_left_level_{self.active_level}', None)
                     else:
-                        self.next_item(f'button_right_level_{level}', None)
+                        self.next_item(f'button_right_level_{self.active_level}', None)
 
     def callback_key_press(self, sender, app_data):
         if self.scene is None:
