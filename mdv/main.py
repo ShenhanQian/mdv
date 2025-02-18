@@ -23,7 +23,7 @@ class MultiDimensionViewerConfig:
     """Height of the GUI"""
     scale: Annotated[float, tyro.conf.arg(aliases=["-s"])] = 1.0
     """Scale of the GUI"""
-    types: Annotated[Literal["text", "image", "mesh"], tyro.conf.arg(aliases=["-t"])] = field(default_factory=lambda: ["text", "image", "mesh"])
+    types: Annotated[Literal["image", "mesh"], tyro.conf.arg(aliases=["-t"])] = field(default_factory=lambda: ["image", "mesh"])
     """Types of files to be displayed"""
     rescale_depth_map: bool = True
     """Rescale depth map for visualization"""
@@ -43,16 +43,15 @@ class MultiDimensionViewer(object):
         self.scale = cfg.scale
         self.width = int(cfg.width * self.scale)
         self.height = int(cfg.height * self.scale)
+        self.nav_pos = [int(self.width-(262+10)*self.scale), 10*self.scale]
         self.rescale_depth_map = cfg.rescale_depth_map
         self.verbose = cfg.verbose
 
         # files types
         self.types_image = ['jpg', 'jpeg', 'png']
         self.types_mesh = ['obj', 'glb', 'ply']
-        self.types_txt = ['txt', 'json', 'csv']
+        self.types_txt = ['txt', 'json', 'csv', 'sh']
         self.supported_types = []
-        if 'text' in cfg.types:
-            self.supported_types += self.types_txt
         if 'image' in cfg.types:
             self.supported_types += self.types_image
         if 'mesh' in cfg.types:
@@ -67,7 +66,7 @@ class MultiDimensionViewer(object):
         if self.root_folder.is_file():
             raise NotImplementedError("File is not supported yet.")
         elif self.root_folder.is_dir():
-            items = sorted([x.name for x in self.root_folder.iterdir() if x.is_dir() or x.suffix[1:] in self.supported_types])
+            items = sorted([x.name for x in self.root_folder.iterdir()])
             self.items_levels.update({0: items})
         self.selected_idx_levels = {self.active_level: 0}
         self.update_items_under_level(self.selected_idx_levels, self.items_levels, self.active_level, update_widgets=False)
@@ -109,7 +108,7 @@ class MultiDimensionViewer(object):
         while base_path.is_dir():
             level += 1
 
-            items = sorted([x.name for x in base_path.iterdir() if x.is_dir() or x.suffix[1:] in self.supported_types])
+            items = sorted([x.name for x in base_path.iterdir()])
 
             if level in selected_idx_levels:
                 try:
@@ -203,7 +202,7 @@ class MultiDimensionViewer(object):
         dpg.bind_item_theme("viewer_tag", theme_no_padding)
 
         # navigator window
-        with dpg.window(label="Navigator", tag='navigator_tag', pos=[0, 0], autosize=True, no_close=True):
+        with dpg.window(label="Navigator", tag='navigator_tag', pos=self.nav_pos, autosize=True, no_close=True):
             for level, items in self.items_levels.items():
                 with dpg.group(horizontal=True, tag=f'group_level_{level}'):
                     if self.selected_idx_levels[level] is None or len(self.items_levels[level]) == 0:
@@ -331,7 +330,7 @@ class MultiDimensionViewer(object):
 
     def resize_windows(self):
         dpg.configure_item('viewer_tag', width=self.width, height=self.height)
-        dpg.configure_item('navigator_tag', pos=[0, 0])
+        dpg.configure_item('navigator_tag', pos=self.nav_pos)
 
         dpg.delete_item('texture_tag')
         dpg.delete_item('image_tag')
@@ -495,14 +494,7 @@ class MultiDimensionViewer(object):
                 return
             
             suffix = path.suffix[1:].lower()
-            if suffix in self.types_txt:
-                with open(path, 'r') as f:
-                    text = f.read()
-                dpg.set_value("text_field_tag", text)
-                dpg.configure_item("image_tag", show=False)
-                dpg.configure_item("text_field_tag", show=True)
-                img = np.zeros([self.height, self.width, 4])  # We still need to update the texture
-            elif suffix in self.types_image:
+            if suffix in self.types_image:
                 dpg.configure_item("image_tag", show=True)
                 dpg.configure_item("text_field_tag", show=False)
                 if path in self.prefetch_cache:
@@ -539,9 +531,20 @@ class MultiDimensionViewer(object):
                 # fg_mask = ((depth>0).astype(np.uint8)*255)[..., None]
                 fg_mask = (np.ones_like(depth) * 255)[..., None]
                 img = np.concatenate([color, fg_mask], axis=2)
+            #  elif suffix in self.types_txt:
+            elif self.is_text_file(path):
+                with open(path, 'r') as f:
+                    text = f.read()
+                dpg.set_value("text_field_tag", text)
+                dpg.configure_item("image_tag", show=False)
+                dpg.configure_item("text_field_tag", show=True)
+                img = np.zeros([self.height, self.width, 4])  # We still need to update the texture
             else:
-                if self.verbose:
-                    raise TypeError(f"Unsupported file type: {path}")
+                # show the file path as text
+                dpg.set_value("text_field_tag", f"Unsupported file type: {str(path)}")
+                dpg.configure_item("image_tag", show=False)
+                dpg.configure_item("text_field_tag", show=True)
+                img = np.zeros([self.height, self.width, 4])
             
             self.need_update = False
             self.io_busy = False
@@ -611,6 +614,25 @@ class MultiDimensionViewer(object):
                     print(f"Prefetch previous path: {prev_path}")
 
         self.need_prefetch = False
+    
+    def is_text_file(self, file_path, block_size=512):
+        """
+        Check if a file is a text file by reading a portion of its content.
+
+        :param file_path: Path to the file to be checked.
+        :param block_size: Number of bytes to read from the file for checking.
+        :return: True if the file is a text file, False otherwise.
+        """
+        try:
+            with open(file_path, 'rb') as file:
+                block = file.read(block_size)
+                if b'\0' in block:
+                    return False
+                text_characters = bytearray({7, 8, 9, 10, 12, 13, 27} | set(range(0x20, 0x100)) - {0x7f})
+                return all(byte in text_characters for byte in block)
+        except Exception as e:
+            print(f"Error reading file {file_path}: {e}")
+            return False
 
     def load_image(self, path, resample=Image.BILINEAR):
         img = Image.open(path)
