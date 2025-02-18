@@ -96,6 +96,8 @@ class MultiDimensionViewer(object):
         for i in range(level+1):
             if selected_idx_levels[i] is None:
                 return Path('-')
+            if len(items_levels[i]) == 0:
+                return Path('-')
             path = path / items_levels[i][selected_idx_levels[i]]
         return path
     
@@ -108,7 +110,10 @@ class MultiDimensionViewer(object):
 
             if level in selected_idx_levels:
                 try:
-                    selected_idx = items.index(items_levels[level][selected_idx_levels[level]])
+                    if selected_idx_levels[level] < len(items_levels[level]):
+                        selected_idx = items.index(items_levels[level][selected_idx_levels[level]])
+                    else:
+                        selected_idx = 0
                 except ValueError:
                     selected_idx = 0
             else:
@@ -197,7 +202,11 @@ class MultiDimensionViewer(object):
         with dpg.window(label="Navigator", tag='navigator_tag', pos=[0, 0], autosize=True, no_close=True):
             for level, items in self.items_levels.items():
                 with dpg.group(horizontal=True, tag=f'group_level_{level}'):
-                    dpg.add_combo(items, default_value=self.items_levels[level][self.selected_idx_levels[level]], height_mode=dpg.mvComboHeight_Regular, callback=lambda sender, data: self.set_item(sender, data), tag=f'combo_level_{level}')
+                    if self.selected_idx_levels[level] is None or len(self.items_levels[level]) == 0:
+                        default_value = '-'
+                    else:
+                        default_value = self.items_levels[level][self.selected_idx_levels[level]]
+                    dpg.add_combo(items, default_value=default_value, height_mode=dpg.mvComboHeight_Regular, callback=lambda sender, data: self.set_item(sender, data), tag=f'combo_level_{level}')
 
                     dpg.add_button(label="<", callback=lambda sender, data: self.prev_item(sender, data), tag=f'button_left_level_{level}')
                     dpg.add_button(label=">", callback=lambda sender, data: self.next_item(sender, data), tag=f'button_right_level_{level}')
