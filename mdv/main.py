@@ -23,7 +23,7 @@ class MultiDimensionViewerConfig:
     """Height of the GUI"""
     scale: Annotated[float, tyro.conf.arg(aliases=["-s"])] = 1.0
     """Scale of the GUI"""
-    types: Annotated[Literal["image", "mesh"], tyro.conf.arg(aliases=["-t"])] = field(default_factory=lambda: ["image", "mesh"])
+    types: Annotated[Literal["text", "image", "mesh"], tyro.conf.arg(aliases=["-t"])] = field(default_factory=lambda: ["text", "image", "mesh"])
     """Types of files to be displayed"""
     rescale_depth_map: bool = True
     """Rescale depth map for visualization"""
@@ -49,7 +49,10 @@ class MultiDimensionViewer(object):
         # files types
         self.types_image = ['jpg', 'jpeg', 'png']
         self.types_mesh = ['obj', 'glb', 'ply']
+        self.types_txt = ['txt', 'json', 'csv']
         self.supported_types = []
+        if 'text' in cfg.types:
+            self.supported_types += self.types_txt
         if 'image' in cfg.types:
             self.supported_types += self.types_image
         if 'mesh' in cfg.types:
@@ -195,7 +198,8 @@ class MultiDimensionViewer(object):
 
         # viewer window
         with dpg.window(label="Viewer", pos=[0, 0], tag='viewer_tag', width=self.width, height=self.height, no_title_bar=True, no_move=True, no_bring_to_front_on_focus=True):
-            dpg.add_image("texture_tag", tag='image_tag', width=self.width, height=self.height)
+            dpg.add_image("texture_tag", tag='image_tag', width=self.width, height=self.height, show=True)
+            dpg.add_text("", tag="text_field_tag", wrap=0, show=False)
         dpg.bind_item_theme("viewer_tag", theme_no_padding)
 
         # navigator window
@@ -476,16 +480,29 @@ class MultiDimensionViewer(object):
             path = self.get_absolate_path(self.selected_idx_levels, self.items_levels, len(self.selected_idx_levels)-1)
             if path.name == '-':
                 dpg.set_value("texture_tag", np.zeros([self.height, self.width, 4]))
+                dpg.configure_item("image_tag", show=True)
+                dpg.configure_item("text_field_tag", show=False)
                 self.need_update = False
                 return
             
             suffix = path.suffix[1:].lower()
-            if suffix in self.types_image:
+            if suffix in self.types_txt:
+                with open(path, 'r') as f:
+                    text = f.read()
+                dpg.set_value("text_field_tag", text)
+                dpg.configure_item("image_tag", show=False)
+                dpg.configure_item("text_field_tag", show=True)
+                img = np.zeros([self.height, self.width, 4])  # We still need to update the texture
+            elif suffix in self.types_image:
+                dpg.configure_item("image_tag", show=True)
+                dpg.configure_item("text_field_tag", show=False)
                 if path in self.prefetch_cache:
                     img = self.prefetch_cache[path]
                 else:
                     img = self.load_image(path)
             elif suffix in self.types_mesh:
+                dpg.configure_item("image_tag", show=True)
+                dpg.configure_item("text_field_tag", show=False)
                 if self.mesh_render_process is None:
                     self.mesh_render_process = mp.Process(target=self.mesh_render_loop)
                     self.mesh_render_process.start()
