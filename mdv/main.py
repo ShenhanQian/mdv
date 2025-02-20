@@ -92,6 +92,9 @@ class MultiDimensionViewer(object):
         self.drag_begin_y = None
         self.drag_button = None
 
+        self.status_pos = [0, self.height]
+        self.status_height = int(20 * self.scale)
+
     def get_absolate_path(self, selected_idx_levels, items_levels, level):  # TODO: added itmers_levels, need update calling functions
         path = self.root_folder
         for i in range(level+1):
@@ -218,6 +221,11 @@ class MultiDimensionViewer(object):
                     dpg.bind_item_theme(f'selectable_level_{level}', self.selectable_theme)
             dpg.add_slider_int(default_value=0, min_value=0, max_value=len(self.items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", self.items_levels[self.active_level][data]))
 
+        # status bar window
+        with dpg.window(label="Status", pos=self.status_pos, tag='status_tag', width=self.width, height=self.status_height, no_title_bar=True, no_move=True, no_resize=True):
+            dpg.add_text("", tag='status_text_tag')
+        dpg.bind_item_theme("status_tag", theme_no_padding)
+
         # key press handlers
         with dpg.handler_registry():
             dpg.add_key_press_handler(dpg.mvKey_Up, callback=self.prev_level)
@@ -338,6 +346,9 @@ class MultiDimensionViewer(object):
         dpg.add_image("texture_tag", tag='image_tag', parent='viewer_tag')
         self.prefetch_cache = {}
         self.need_update = True
+
+        self.status_pos = [0, self.height]
+        dpg.configure_item('status_tag', width=self.width, pos=self.status_pos)
 
         # restart thread to update rendering resolution
         if self.mesh_render_process is not None:
@@ -465,7 +476,7 @@ class MultiDimensionViewer(object):
     def run(self):
         self.define_gui()
         dpg.set_global_font_scale(self.scale)
-        dpg.create_viewport(title='Multi-Dimension Viewer', width=self.width, height=self.height, resizable=True)
+        dpg.create_viewport(title='Multi-Dimension Viewer', width=self.width, height=self.height + self.status_height, resizable=True)
         dpg.setup_dearpygui()
         dpg.show_viewport()
         self.need_update = True
@@ -497,6 +508,7 @@ class MultiDimensionViewer(object):
             
             suffix = path.suffix[1:].lower()
             if suffix in self.types_image:
+                self.update_status_text('image')
                 dpg.configure_item("image_tag", show=True)
                 dpg.configure_item("text_field_tag", show=False)
                 if path in self.prefetch_cache:
@@ -504,6 +516,7 @@ class MultiDimensionViewer(object):
                 else:
                     img = self.load_image(path)
             elif suffix in self.types_mesh:
+                self.update_status_text('mesh')
                 dpg.configure_item("image_tag", show=True)
                 dpg.configure_item("text_field_tag", show=False)
                 if self.mesh_render_process is None:
@@ -535,6 +548,7 @@ class MultiDimensionViewer(object):
                 img = np.concatenate([color, fg_mask], axis=2)
             #  elif suffix in self.types_txt:
             elif self.is_text_file(path):
+                self.update_status_text('text')
                 with open(path, 'r') as f:
                     text = f.read()
                 dpg.set_value("text_field_tag", text)
@@ -542,6 +556,7 @@ class MultiDimensionViewer(object):
                 dpg.configure_item("text_field_tag", show=True)
                 img = np.zeros([self.height, self.width, 4])  # We still need to update the texture
             else:
+                self.update_status_text(None)
                 # show the file path as text
                 dpg.set_value("text_field_tag", f"Unsupported file type: {str(path)}")
                 dpg.configure_item("image_tag", show=False)
@@ -571,6 +586,16 @@ class MultiDimensionViewer(object):
         dpg.set_value("texture_tag", img)
         if self.verbose:
             print(f"Updated texture with image shape: {img.shape}")
+    
+    def update_status_text(self, type):
+        if type == 'mesh':
+            dpg.set_value("status_text_tag", " Mesh | Move: WASDQE | Reset: R | Light Intensity: [ ]")
+        elif type == 'image':
+            dpg.set_value("status_text_tag", " Image |")
+        elif type == 'image':
+            dpg.set_value("status_text_tag", " Text |")
+        else:
+            dpg.set_value("status_text_tag", "")
 
     def prefetch_loop(self):
         # prevent prefetching while loading thec current file
