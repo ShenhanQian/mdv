@@ -45,7 +45,7 @@ class MultiDimensionViewer(object):
         self.scale = cfg.scale
         self.width = int(cfg.width * self.scale)
         self.height = int(cfg.height * self.scale)
-        self.nav_pos = [int(self.width-(262+10)*self.scale), 10*self.scale]
+        self.nav_pos = [int(self.width-(262+30)*self.scale), 10*self.scale]
         self.rescale_depth_map = cfg.rescale_depth_map
         self.verbose = cfg.verbose
 
@@ -260,9 +260,7 @@ class MultiDimensionViewer(object):
             dpg.set_value(f'selectable_level_{level}', level==self.active_level)
         self.update_slider()
 
-        self.need_prefetch = True
-        if self.need_prefetch:
-            threading.Thread(target=self.prefetch_loop).start()
+        threading.Thread(target=self.prefetch_thread).start()
     
     def update_slider(self):
         if len(self.items_levels[self.active_level]) > 0:
@@ -317,6 +315,7 @@ class MultiDimensionViewer(object):
             sender = f'button_left_level_{level}'
         else:
             level = int(sender.split('_')[-1])
+            self.set_level(f'selectable_level_{level}', None)
 
         idx = self.selected_idx_levels[level]
         if idx > 0:
@@ -329,6 +328,7 @@ class MultiDimensionViewer(object):
             sender = f'button_right_level_{level}'
         else:
             level = int(sender.split('_')[-1])
+            self.set_level(f'selectable_level_{level}', None)
 
         idx = self.selected_idx_levels[level]
         if idx < len(self.items_levels[level]) - 1:
@@ -529,13 +529,12 @@ class MultiDimensionViewer(object):
                     else:
                         self.scene = self.load_scene(path)
                         self.prefetch_cache[path] = self.scene
-                else:
-                    camera_node = [node for node in self.scene.nodes if isinstance(node.camera, pyrender.camera.Camera)][0]
-                    light_node = [node for node in self.scene.nodes if isinstance(node.light, pyrender.light.Light)][0]
+                    self.camera_node = [node for node in self.scene.nodes if isinstance(node.camera, pyrender.camera.Camera)][0]
+                    self.light_node = [node for node in self.scene.nodes if isinstance(node.light, pyrender.light.Light)][0]
 
-                    self.scene.set_pose(camera_node, self.cam.pose)
-                    self.scene.set_pose(light_node, self.cam.pose)
-                    light_node.light.intensity = self.light_intensity
+                self.scene.set_pose(self.camera_node, self.cam.pose)
+                self.scene.set_pose(self.light_node, self.cam.pose)
+                self.light_node.light.intensity = self.light_intensity
 
                 if self.verbose:
                     print(f"Render scene with camera pose:")
@@ -566,7 +565,7 @@ class MultiDimensionViewer(object):
             self.need_update = False
             self.io_busy = False
             if self.need_prefetch:
-                threading.Thread(target=self.prefetch_loop).start()
+                threading.Thread(target=self.prefetch_thread).start()
         except Exception as e:
             print(f"Error: {e}")
             img = np.zeros([self.height, self.width, 4])
@@ -597,7 +596,9 @@ class MultiDimensionViewer(object):
         else:
             dpg.set_value("status_text_tag", "")
 
-    def prefetch_loop(self):
+    def prefetch_thread(self):
+        if self.verbose:
+            print("Prefetch thread started")
         # prevent prefetching while loading thec current file
         if self.io_busy:
             return
