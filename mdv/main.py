@@ -23,8 +23,6 @@ class MultiDimensionViewerConfig:
     """Height of the GUI"""
     scale: Annotated[float, tyro.conf.arg(aliases=["-s"])] = 1.0
     """Scale of the GUI"""
-    types: Annotated[Literal["image", "mesh"], tyro.conf.arg(aliases=["-t"])] = field(default_factory=lambda: ["image", "mesh"])
-    """Types of files to be displayed"""
     exclude_suffixes: Annotated[List, tyro.conf.arg(aliases=["-e"])] = field(default_factory=lambda: [])
     """Exclude files with these suffixes"""
     rescale_depth_map: bool = True
@@ -37,6 +35,8 @@ class MultiDimensionViewerConfig:
     """Field of view of the camera"""
     cam_convention: str = "opengl"
     """Camera convention"""
+    light_intensity: float = 10
+    """Light intensity"""
 
 
 class MultiDimensionViewer(object):
@@ -61,6 +61,7 @@ class MultiDimensionViewer(object):
         # database
         self.active_level = 0
         self.items_levels = {}
+        assert self.root_folder.exists(), f"Root folder {self.root_folder} does not exist."
         if self.root_folder.is_file():
             raise NotImplementedError("File is not supported yet.")
         elif self.root_folder.is_dir():
