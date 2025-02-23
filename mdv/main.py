@@ -36,7 +36,9 @@ class MultiDimensionViewerConfig:
     cam_convention: str = "opengl"
     """Camera convention"""
     light_intensity: float = 10
-    """Light intensity"""
+    """Light intensity of the 3D viewer"""
+    background_brightness: float = 0.05
+    """Background brightness of the 3D viewer"""
 
 
 class MultiDimensionViewer(object):
@@ -81,7 +83,8 @@ class MultiDimensionViewer(object):
         self.mesh_render_process = None
         self.scene = None
         self.cam = OrbitCamera(self.width, self.height, r=cfg.cam_radius, fovy=cfg.cam_fovy, convention=cfg.cam_convention)
-        self.light_intensity = 10
+        self.light_intensity = cfg.light_intensity
+        self.background_brightness = cfg.background_brightness
 
         # buffers for mouse interaction
         self.cursor_x = None
@@ -542,9 +545,11 @@ class MultiDimensionViewer(object):
 
                 self.render_input_queue.put(self.scene)
                 color, depth = self.render_output_queue.get()
-                # fg_mask = ((depth>0).astype(np.uint8)*255)[..., None]
+                fg_alpha = (depth>0).astype(np.float32)[..., None]
+                bg_alpha = (1-fg_alpha) * self.background_brightness
+                alpha = ((fg_alpha + bg_alpha) * 255).astype(np.uint8)
                 fg_mask = (np.ones_like(depth) * 255)[..., None]
-                img = np.concatenate([color, fg_mask], axis=2)
+                img = np.concatenate([color, alpha], axis=2)
             #  elif suffix in self.types_txt:
             elif self.is_text_file(path):
                 self.update_status_text('text')
@@ -698,19 +703,21 @@ class MultiDimensionViewer(object):
             color, depth = r.render(scene)
             self.render_output_queue.put([color, depth])
 
+    def import_trimesh_to_pyrender(self, mesh):
+        if isinstance(mesh, trimesh.points.PointCloud):
+            return pyrender.Mesh.from_points(mesh.vertices, colors=mesh.colors)
+        else:
+            return pyrender.Mesh.from_trimesh(mesh)
+    
     def load_scene(self, file_path: Path):
         scene = pyrender.Scene()
         mesh = trimesh.load(file_path)
         if Path(file_path).suffix == ".glb":
             for k in mesh.geometry.keys():
                 mesh_k = mesh.geometry[k]
-                scene.add(pyrender.Mesh.from_trimesh(mesh_k))
+                scene.add(self.import_trimesh_to_pyrender(mesh_k))
         else:
-            if isinstance(mesh, trimesh.points.PointCloud):
-                mesh = pyrender.Mesh.from_points(mesh.vertices, colors=mesh.colors)
-            else:
-                mesh = pyrender.Mesh.from_trimesh(mesh)
-            scene.add(mesh)
+            scene.add(self.import_trimesh_to_pyrender(mesh))
         
         camera = pyrender.PerspectiveCamera(yfov=np.radians(self.cam.fovy))
         scene.add(camera, pose=self.cam.pose)
