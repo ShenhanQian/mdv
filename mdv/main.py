@@ -36,7 +36,9 @@ class MultiDimensionViewerConfig:
     cam_convention: str = "opengl"
     """Camera convention"""
     light_intensity: float = 10
-    """Light intensity of the 3D viewer"""
+    """Directional light intensity of the 3D viewer"""
+    ambient_light: float = 0.3
+    """Ambient light of the 3D viewer"""
     background_brightness: float = 0.05
     """Background brightness of the 3D viewer"""
 
@@ -84,6 +86,7 @@ class MultiDimensionViewer(object):
         self.scene = None
         self.cam = OrbitCamera(self.width, self.height, r=cfg.cam_radius, fovy=cfg.cam_fovy, convention=cfg.cam_convention)
         self.light_intensity = cfg.light_intensity
+        self.ambient_light = cfg.ambient_light
         self.background_brightness = cfg.background_brightness
 
         # buffers for mouse interaction
@@ -710,7 +713,7 @@ class MultiDimensionViewer(object):
             return pyrender.Mesh.from_trimesh(mesh)
     
     def load_scene(self, file_path: Path):
-        scene = pyrender.Scene()
+        scene = pyrender.Scene(ambient_light=[self.ambient_light]*3)
         mesh = trimesh.load(file_path)
         if Path(file_path).suffix == ".glb":
             for k in mesh.geometry.keys():
