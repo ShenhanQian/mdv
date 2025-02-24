@@ -1,6 +1,6 @@
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Annotated, Literal, List
+from typing import Annotated, List
 import tyro
 from tyro.conf import Positional
 import numpy as np
@@ -23,7 +23,7 @@ class MultiDimensionViewerConfig:
     """Height of the GUI"""
     scale: Annotated[float, tyro.conf.arg(aliases=["-s"])] = 1.0
     """Scale of the GUI"""
-    exclude_suffixes: Annotated[List, tyro.conf.arg(aliases=["-e"])] = field(default_factory=lambda: [])
+    exclude_suffixes: Annotated[List[str], tyro.conf.arg(aliases=["-e"])] = field(default_factory=lambda: [])
     """Exclude files with these suffixes"""
     rescale_depth_map: bool = True
     """Rescale depth map for visualization"""
@@ -39,8 +39,6 @@ class MultiDimensionViewerConfig:
     """Directional light intensity of the 3D viewer"""
     ambient_light: float = 0.3
     """Ambient light of the 3D viewer"""
-    background_brightness: float = 0.05
-    """Background brightness of the 3D viewer"""
 
 
 class MultiDimensionViewer(object):
@@ -87,7 +85,6 @@ class MultiDimensionViewer(object):
         self.cam = OrbitCamera(self.width, self.height, r=cfg.cam_radius, fovy=cfg.cam_fovy, convention=cfg.cam_convention)
         self.light_intensity = cfg.light_intensity
         self.ambient_light = cfg.ambient_light
-        self.background_brightness = cfg.background_brightness
 
         # buffers for mouse interaction
         self.cursor_x = None
@@ -548,11 +545,8 @@ class MultiDimensionViewer(object):
 
                 self.render_input_queue.put(self.scene)
                 color, depth = self.render_output_queue.get()
-                fg_alpha = (depth>0).astype(np.float32)[..., None]
-                bg_alpha = (1-fg_alpha) * self.background_brightness
-                alpha = ((fg_alpha + bg_alpha) * 255).astype(np.uint8)
                 fg_mask = (np.ones_like(depth) * 255)[..., None]
-                img = np.concatenate([color, alpha], axis=2)
+                img = np.concatenate([color, fg_mask], axis=2)
             #  elif suffix in self.types_txt:
             elif self.is_text_file(path):
                 self.update_status_text('text')
