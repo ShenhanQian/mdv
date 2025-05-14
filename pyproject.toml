@@ -17,7 +17,9 @@ dependencies = [
     "tyro",
     "numpy",
     "pillow",
+    "opencv-python",
     "pyrender@git+https://github.com/ShenhanQian/pyrender@support-numpy-2",
+    "h5py",
 ]
 [project.scripts]
 mdv = "mdv:main.main"

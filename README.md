@@ -25,8 +25,9 @@ Navigate hierarchical data in multi dimensions with your keyboard and mouse (whe
 ```
 
 Navigate an arbitrary number of levels of folders and files. Current supporte file types:
-- images: jpg (jpeg), png
+- images: jpg (jpeg), png, flo5, dsp5
 - meshes: obj, glb, ply
+- containers: npz
 
 More file types to support:
 - videos

@@ -5,12 +5,15 @@ import tyro
 from tyro.conf import Positional
 import numpy as np
 from PIL import Image
+import h5py
+import cv2
 import pyrender
 import trimesh
 import multiprocessing as mp
 import threading
 import dearpygui.dearpygui as dpg
 from .utils.camera import OrbitCamera
+from mdv.utils.flow import flow_to_image
 
 
 @dataclass
@@ -25,6 +28,8 @@ class MultiDimensionViewerConfig:
     """Scale of the GUI"""
     exclude_suffixes: Annotated[List[str], tyro.conf.arg(aliases=["-e"])] = field(default_factory=lambda: [])
     """Exclude files with these suffixes"""
+    include_suffixes: Annotated[List[str], tyro.conf.arg(aliases=["-i"])] = field(default_factory=lambda: [])
+    """Include files with these suffixes"""
     rescale_depth_map: bool = True
     """Rescale depth map for visualization"""
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
@@ -52,10 +57,12 @@ class MultiDimensionViewer(object):
         self.verbose = cfg.verbose
 
         # files types
-        self.types_image = ['jpg', 'jpeg', 'png']
+        self.types_image = ['jpg', 'jpeg', 'png', 'flo5', 'dsp5']
         self.types_mesh = ['obj', 'glb', 'ply']
+        self.types_container = ['npz']
         # self.types_txt = ['txt', 'json', 'csv', 'sh']
         self.exclude_suffixes = cfg.exclude_suffixes
+        self.include_suffixes = cfg.include_suffixes
 
         # styles
         self.selectable_width = 12 * self.scale
@@ -67,7 +74,10 @@ class MultiDimensionViewer(object):
         if self.root_folder.is_file():
             raise NotImplementedError("File is not supported yet.")
         elif self.root_folder.is_dir():
-            items = sorted([x.name for x in self.root_folder.iterdir() if x.is_dir() or x.suffix[1:].lower() not in self.exclude_suffixes])
+            if len(self.include_suffixes) > 0:
+                items = sorted([x.name for x in self.root_folder.iterdir() if x.is_dir() or x.suffix[1:].lower() in self.include_suffixes])
+            else:
+                items = sorted([x.name for x in self.root_folder.iterdir() if x.is_dir() or x.suffix[1:].lower() not in self.exclude_suffixes])
             self.items_levels.update({0: items})
         self.selected_idx_levels = {self.active_level: 0}
         self.update_items_under_level(self.selected_idx_levels, self.items_levels, self.active_level, update_widgets=False)
@@ -113,7 +123,10 @@ class MultiDimensionViewer(object):
         while base_path.is_dir():
             level += 1
 
-            items = sorted([x.name for x in base_path.iterdir() if x.is_dir() or x.suffix[1:].lower() not in self.exclude_suffixes])
+            if len(self.include_suffixes) > 0:
+                items = sorted([x.name for x in base_path.iterdir() if x.is_dir() or x.suffix[1:].lower() in self.include_suffixes])
+            else:
+                items = sorted([x.name for x in base_path.iterdir() if x.is_dir() or x.suffix[1:].lower() not in self.exclude_suffixes])
 
             if level in selected_idx_levels:
                 try:
@@ -547,6 +560,21 @@ class MultiDimensionViewer(object):
                 color, depth = self.render_output_queue.get()
                 fg_mask = (np.ones_like(depth) * 255)[..., None]
                 img = np.concatenate([color, fg_mask], axis=2)
+            elif suffix in self.types_container:
+                self.update_status_text('container')
+                text = ""
+                if suffix == 'npz':
+                    with np.load(path) as npz:
+                        keys = npz.files
+                        if len(keys) > 0:
+                            for key in keys:
+                                text += f"{key}, {npz[key].shape}, {npz[key].dtype}\n"
+                else:
+                    text = f"Unsupported container type: {str(path)}"
+                dpg.set_value("text_field_tag", text)
+                dpg.configure_item("image_tag", show=False)
+                dpg.configure_item("text_field_tag", show=True)
+                img = np.zeros([self.height, self.width, 4])  # We still need to update the texture
             #  elif suffix in self.types_txt:
             elif self.is_text_file(path):
                 self.update_status_text('text')
@@ -593,7 +621,9 @@ class MultiDimensionViewer(object):
             dpg.set_value("status_text_tag", " Mesh | Move: WASDQE | Reset: R | Light Intensity: [ ]")
         elif type == 'image':
             dpg.set_value("status_text_tag", " Image |")
-        elif type == 'image':
+        elif type == 'container':
+            dpg.set_value("status_text_tag", " Container |")
+        elif type == 'Text':
             dpg.set_value("status_text_tag", " Text |")
         else:
             dpg.set_value("status_text_tag", "")
@@ -665,26 +695,60 @@ class MultiDimensionViewer(object):
             return False
 
     def load_image(self, path, resample=Image.BILINEAR):
-        img = Image.open(path)
         if self.verbose:
-            print(f"Load image: {path}, size: {img.size}, mode: {img.mode}")
-        
-        # turn RGBA to RGB if needed
-        if img.mode == 'RGB':
-            img = img.convert('RGBA')
-        # Handle 16-bit depth images
-        if img.mode == 'I;16':
+            print(f"Load image: {path}")
+
+        suffix = path.suffix[1:].lower()
+        if suffix in ['dsp5', 'flo5']:
+            if suffix == 'dsp5':
+                with h5py.File(path, "r") as f:
+                    if "disparity" not in f.keys():
+                        raise IOError(f"File {path} does not have a 'disparity' key. Is this a valid dsp5 file?")
+                    disparity = f["disparity"][()].astype(np.float32)
+                disparity[np.isnan(disparity)] = 0
+                img = disparity
+            elif suffix == 'flo5':
+                with h5py.File(path, "r") as f:
+                    if "flow" not in f.keys():
+                        raise IOError(f"File {path} does not have a 'flow' key. Is this a valid flo5 file?")
+                    flow = f["flow"][()].astype(np.float32)
+
+                # resize here to avoid unnecessary slow cocnversion from flow to image
+                flow_h, flow_w = flow.shape[:2]
+                scale = min(self.height / flow_h, self.width / flow_w)
+                flow = cv2.resize(flow, (int(flow_w * scale), int(flow_h * scale)), interpolation=cv2.INTER_LINEAR)
+
+                img = flow_to_image(flow)
+            img = Image.fromarray(img)
+        else:
+            img = Image.open(path)
+
+        if img.mode == 'RGB':  # RGB
+            img = np.array(img.convert('RGBA'))
+        elif img.mode == 'I;16':  # 16-bit grayscale
             img = np.array(img, dtype=np.uint16)
             if self.rescale_depth_map:
                 img = img / img.max()  # for visualization
             else:
                 img = img / 65535.0  # Normalize to [0, 1]
-            img = (img * 255).astype(np.uint8)  # Convert to 8-bit
-            img = Image.fromarray(img)
+            img = (img * 255).astype(np.uint8)
+        elif img.mode == 'L':  # 8-bit grayscale
+            img = np.array(img, dtype=np.uint8)
+            img = img / img.max() * 255
+        elif img.mode == 'F':  # 32-bit float grayscale
+            img = np.array(img, dtype=np.float32)
+            img = (img / (img.max() + 1e-6) * 255).astype(np.uint8)
+        elif img.mode == '1':  # 1-bit binary
+            img = np.array(img, dtype=np.uint8) * 255
+        else:
+            # raise ValueError(f"Unsupported image mode: {img.mode}")
+            print(f"Unlisted image mode: {img.mode}")
+            img = np.array(img)
+        
+        img_h, img_w = img.shape[:2]
+        scale = min(self.height / img_h, self.width / img_w)
+        img = cv2.resize(img, (int(img_w * scale), int(img_h * scale)), interpolation=cv2.INTER_LINEAR)
 
-        scale = min(self.height / img.height, self.width / img.width)
-        img = img.resize((int(img.width * scale), int(img.height * scale)), resample)
-        img = np.asarray(img)
         if img.ndim == 2:
             img = np.repeat(img[:, :, np.newaxis], 4, axis=2)
         return img
