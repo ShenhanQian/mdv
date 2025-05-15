@@ -6,6 +6,7 @@ from tyro.conf import Positional
 import numpy as np
 from PIL import Image
 import h5py
+from PIL import Image
 import cv2
 import pyrender
 import trimesh
@@ -65,7 +66,7 @@ class MultiDimensionViewer(object):
         self.include_suffixes = cfg.include_suffixes
 
         # styles
-        self.selectable_width = 12 * self.scale
+        self.selectable_width = int(12 * self.scale)
 
         # database
         self.active_level = 0
@@ -145,9 +146,7 @@ class MultiDimensionViewer(object):
             if update_widgets:
                 # add if not exist
                 if not dpg.does_item_exist(f'combo_level_{level}'):
-                    # check if slider exists
-                    if dpg.does_item_exist(f'slider_level'):
-                        dpg.delete_item(f'slider_level')
+                    self.remove_bottom_items()
 
                     with dpg.group(horizontal=True, parent='navigator_tag', tag=f'group_level_{level}'):
                         dpg.add_combo(items, default_value=selected, height_mode=dpg.mvComboHeight_Large, callback=lambda sender, data: self.set_item(sender, data), tag=f'combo_level_{level}')
@@ -177,9 +176,20 @@ class MultiDimensionViewer(object):
             self.set_level(f'selectable_level_{level}', None)
         
         if update_widgets:
-            if not dpg.does_item_exist(f'slider_level'):
-                dpg.add_slider_int(default_value=0, min_value=0, max_value=len(items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", items_levels[self.active_level][data]), parent='navigator_tag')
+            self.add_bottom_items(items_levels)
 
+    def add_bottom_items(self, items_levels):
+        if not dpg.does_item_exist(f'slider_level'):
+            dpg.add_slider_int(default_value=0, min_value=0, max_value=len(items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", items_levels[self.active_level][data]), parent='navigator_tag')
+        if not dpg.does_item_exist(f'button_save_image'):
+            dpg.add_button(label="Save Image", tag='button_save_image', callback=self.save_image, parent='navigator_tag')
+    
+    def remove_bottom_items(self):
+        if dpg.does_item_exist(f'slider_level'):
+            dpg.delete_item(f'slider_level')
+        if dpg.does_item_exist(f'button_save_image'):
+            dpg.delete_item(f'button_save_image')
+    
     def define_gui(self):
         dpg.create_context()
 
@@ -236,6 +246,7 @@ class MultiDimensionViewer(object):
                     dpg.add_selectable(width=self.selectable_width, default_value=level==self.active_level, tag=f'selectable_level_{level}', callback=lambda sender, data: self.set_level(sender, data))
                     dpg.bind_item_theme(f'selectable_level_{level}', self.selectable_theme)
             dpg.add_slider_int(default_value=0, min_value=0, max_value=len(self.items_levels[self.active_level])-1, tag=f'slider_level', callback=lambda sender, data: self.set_item(f"slider_{self.active_level}", self.items_levels[self.active_level][data]))
+            dpg.add_button(label="Save Image", tag=f'button_save_image', callback=self.save_image)
 
         # status bar window
         with dpg.window(label="Status", pos=self.status_pos, tag='status_tag', width=self.width, height=self.status_height, no_title_bar=True, no_move=True, no_resize=True):
@@ -603,6 +614,7 @@ class MultiDimensionViewer(object):
             self.io_busy = True
 
         # pad
+        self.viewer_img = img
         img = img.astype(np.float32) / 255
         diff_height = (self.height - img.shape[0])
         pad_top = diff_height // 2
@@ -627,6 +639,22 @@ class MultiDimensionViewer(object):
             dpg.set_value("status_text_tag", " Text |")
         else:
             dpg.set_value("status_text_tag", "")
+    
+    def save_image(self):
+        img = Image.fromarray(self.viewer_img)
+        img = img.convert("RGBA")  # Ensure the image is in RGBA format
+        # Expand user (~) and save to absolute path for cross-platform compatibility
+        # Find an available filename with incremental numbering
+        save_dir = Path("~//mdv").expanduser().resolve()
+        save_dir.mkdir(parents=True, exist_ok=True)
+        i = 1
+        while True:
+            save_path = save_dir / f"image_{i}.png"
+            if not save_path.exists():
+                break
+            i += 1
+        img.save(str(save_path))
+        print(f"Image saved to {save_path}")
 
     def prefetch_thread(self):
         if self.verbose:
