@@ -31,8 +31,10 @@ class MultiDimensionViewerConfig:
     """Exclude files with these suffixes"""
     include_suffixes: Annotated[List[str], tyro.conf.arg(aliases=["-i"])] = field(default_factory=lambda: [])
     """Include files with these suffixes"""
-    rescale_depth_map: bool = True
+    rescale_grayscale: bool = True
     """Rescale depth map for visualization"""
+    use_colormap_for_grayscale: bool = True
+    """Use colormap for grayscale images"""
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
     """Verbose mode"""
     cam_radius: float = 1.0
@@ -54,7 +56,8 @@ class MultiDimensionViewer(object):
         self.width = int(cfg.width * self.scale)
         self.height = int(cfg.height * self.scale)
         self.nav_pos = [int(self.width-(262+30)*self.scale), 10*self.scale]
-        self.rescale_depth_map = cfg.rescale_depth_map
+        self.rescale_grayscale = cfg.rescale_grayscale
+        self.use_colormap_for_grayscale = cfg.use_colormap_for_grayscale
         self.verbose = cfg.verbose
 
         # files types
@@ -64,6 +67,7 @@ class MultiDimensionViewer(object):
         # self.types_txt = ['txt', 'json', 'csv', 'sh']
         self.exclude_suffixes = cfg.exclude_suffixes
         self.include_suffixes = cfg.include_suffixes
+        self.mode = None  # 'image', 'mesh', 'container', 'text'
 
         # styles
         self.selectable_width = int(12 * self.scale)
@@ -276,6 +280,7 @@ class MultiDimensionViewer(object):
             dpg.add_key_press_handler(dpg.mvKey_E, callback=self.callback_key_press, tag='_mvKey_E')
             dpg.add_key_press_handler(dpg.mvKey_Q, callback=self.callback_key_press, tag='_mvKey_Q')
             dpg.add_key_press_handler(dpg.mvKey_R, callback=self.callback_key_press, tag='_mvKey_R')
+            dpg.add_key_press_handler(dpg.mvKey_C, callback=self.callback_key_press, tag='_mvKey_C')
             dpg.add_key_press_handler(dpg.mvKey_Open_Brace, callback=self.callback_key_press, tag='_mvKey_Open_Brace')
             dpg.add_key_press_handler(dpg.mvKey_Close_Brace, callback=self.callback_key_press, tag='_mvKey_Close_Brace')
     
@@ -476,27 +481,61 @@ class MultiDimensionViewer(object):
                         self.next_item(f'button_right_level_{self.active_level}', None)
 
     def callback_key_press(self, sender, app_data):
-        if self.scene is None:
-            return
         step = 30
         if sender == '_mvKey_W':
-            self.cam.pan(dz=step)
+            if self.mode == 'mesh':
+                self.cam.pan(dz=step)
+                if self.verbose:
+                    print(f"Camera pan dz: {step}")
         elif sender == '_mvKey_S':
-            self.cam.pan(dz=-step)
+            if self.mode == 'mesh':
+                self.cam.pan(dz=-step)
+                if self.verbose:
+                    print(f"Camera pan dz: {-step}")
         elif sender == '_mvKey_A':
-            self.cam.pan(dx=step)
+            if self.mode == 'mesh':
+                self.cam.pan(dx=step)
+                if self.verbose:
+                    print(f"Camera pan dx: {step}")
         elif sender == '_mvKey_D':
-            self.cam.pan(dx=-step)
+            if self.mode == 'mesh':
+                self.cam.pan(dx=-step)
+                if self.verbose:
+                    print(f"Camera pan dx: {-step}")
         elif sender == '_mvKey_E':
-            self.cam.pan(dy=step)
+            if self.mode == 'mesh':
+                self.cam.pan(dy=step)
+                if self.verbose:
+                    print(f"Camera pan dy: {step}")
         elif sender == '_mvKey_Q':
-            self.cam.pan(dy=-step)
+            if self.mode == 'mesh':
+                self.cam.pan(dy=-step)
+                if self.verbose:
+                    print(f"Camera pan dy: {-step}")
         elif sender == '_mvKey_R':
-            self.cam.reset()
+            if self.mode == 'mesh':
+                self.cam.reset()
+                if self.verbose:
+                    print(f"Camera reset")
+            elif self.mode == 'image':
+                self.rescale_grayscale = not self.rescale_grayscale
+                if self.verbose:
+                    print(f"Rescale grayscale: {self.rescale_grayscale}")
+        elif sender == '_mvKey_C':
+            if self.mode == 'image':
+                self.use_colormap_for_grayscale = not self.use_colormap_for_grayscale
+                if self.verbose:
+                    print(f"Use colormap for grayscale: {self.use_colormap_for_grayscale}")
         elif sender == '_mvKey_Open_Brace':
-            self.light_intensity /= 2
+            if self.mode == 'mesh':
+                self.light_intensity /= 2
+                if self.verbose:
+                    print(f"Light intensity: {self.light_intensity}")
         elif sender == '_mvKey_Close_Brace':
-            self.light_intensity *= 2
+            if self.mode == 'mesh':
+                self.light_intensity *= 2
+                if self.verbose:
+                    print(f"Light intensity: {self.light_intensity}")
 
         self.need_update = True
 
@@ -535,7 +574,7 @@ class MultiDimensionViewer(object):
             
             suffix = path.suffix[1:].lower()
             if suffix in self.types_image:
-                self.update_status_text('image')
+                self.set_mode('image')
                 dpg.configure_item("image_tag", show=True)
                 dpg.configure_item("text_field_tag", show=False)
                 if path in self.prefetch_cache:
@@ -543,7 +582,7 @@ class MultiDimensionViewer(object):
                 else:
                     img = self.load_image(path)
             elif suffix in self.types_mesh:
-                self.update_status_text('mesh')
+                self.set_mode('mesh')
                 dpg.configure_item("image_tag", show=True)
                 dpg.configure_item("text_field_tag", show=False)
                 if self.mesh_render_process is None:
@@ -572,7 +611,7 @@ class MultiDimensionViewer(object):
                 fg_mask = (np.ones_like(depth) * 255)[..., None]
                 img = np.concatenate([color, fg_mask], axis=2)
             elif suffix in self.types_container:
-                self.update_status_text('container')
+                self.set_mode('container')
                 text = ""
                 if suffix == 'npz':
                     with np.load(path) as npz:
@@ -588,7 +627,7 @@ class MultiDimensionViewer(object):
                 img = np.zeros([self.height, self.width, 4])  # We still need to update the texture
             #  elif suffix in self.types_txt:
             elif self.is_text_file(path):
-                self.update_status_text('text')
+                self.set_mode('text')
                 with open(path, 'r') as f:
                     text = f.read()
                 dpg.set_value("text_field_tag", text)
@@ -596,7 +635,7 @@ class MultiDimensionViewer(object):
                 dpg.configure_item("text_field_tag", show=True)
                 img = np.zeros([self.height, self.width, 4])  # We still need to update the texture
             else:
-                self.update_status_text(None)
+                self.set_mode(None)
                 # show the file path as text
                 dpg.set_value("text_field_tag", f"Unsupported file type: {str(path)}")
                 dpg.configure_item("image_tag", show=False)
@@ -628,16 +667,21 @@ class MultiDimensionViewer(object):
         if self.verbose:
             print(f"Updated texture with image shape: {img.shape}")
     
-    def update_status_text(self, type):
-        if type == 'mesh':
+    def set_mode(self, mode):
+        if mode == 'mesh':
+            self.mode = 'mesh'
             dpg.set_value("status_text_tag", " Mesh | Move: WASDQE | Reset: R | Light Intensity: [ ]")
-        elif type == 'image':
-            dpg.set_value("status_text_tag", " Image |")
-        elif type == 'container':
+        elif mode == 'image':
+            self.mode = 'image'
+            dpg.set_value("status_text_tag", " Image | R: Rescale | C: Colormap")
+        elif mode == 'container':
+            self.mode = 'container'
             dpg.set_value("status_text_tag", " Container |")
-        elif type == 'Text':
+        elif mode == 'text':
+            self.mode = 'text'
             dpg.set_value("status_text_tag", " Text |")
         else:
+            self.mode = None
             dpg.set_value("status_text_tag", "")
     
     def save_image(self):
@@ -751,18 +795,27 @@ class MultiDimensionViewer(object):
         else:
             img = Image.open(path)
 
+        if self.verbose:
+            print(f"Image mode: {img.mode}")
+
         if img.mode == 'RGB':  # RGB
             img = np.array(img.convert('RGBA'))
         elif img.mode == 'I;16':  # 16-bit grayscale
             img = np.array(img, dtype=np.uint16)
-            if self.rescale_depth_map:
+            if self.rescale_grayscale:
                 img = img / img.max()  # for visualization
             else:
                 img = img / 65535.0  # Normalize to [0, 1]
+            if self.use_colormap_for_grayscale:
+                from matplotlib import cm
+                cmap = cm.get_cmap("viridis")
+                img = cmap(img)
             img = (img * 255).astype(np.uint8)
         elif img.mode == 'L':  # 8-bit grayscale
             img = np.array(img, dtype=np.uint8)
             img = img / img.max() * 255
+        elif img.mode == 'P':  # Palette
+            img = np.array(img.convert('RGBA'))
         elif img.mode == 'F':  # 32-bit float grayscale
             img = np.array(img, dtype=np.float32)
             img = (img / (img.max() + 1e-6) * 255).astype(np.uint8)
@@ -772,7 +825,7 @@ class MultiDimensionViewer(object):
             # raise ValueError(f"Unsupported image mode: {img.mode}")
             print(f"Unlisted image mode: {img.mode}")
             img = np.array(img)
-        
+
         img_h, img_w = img.shape[:2]
         scale = min(self.height / img_h, self.width / img_w)
         img = cv2.resize(img, (int(img_w * scale), int(img_h * scale)), interpolation=cv2.INTER_LINEAR)
