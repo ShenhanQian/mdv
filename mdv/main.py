@@ -1,6 +1,6 @@
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import Annotated, List
+from typing import Annotated, List, Optional
 import tyro
 from tyro.conf import Positional
 import numpy as np
@@ -31,8 +31,10 @@ class MultiDimensionViewerConfig:
     """Exclude files with these suffixes"""
     include_suffixes: Annotated[List[str], tyro.conf.arg(aliases=["-i"])] = field(default_factory=lambda: [])
     """Include files with these suffixes"""
+    filter_percentile: Optional[float] = None
+    """Filter image values by percentile, e.g., 99"""
     rescale_grayscale: bool = True
-    """Rescale depth map for visualization"""
+    """Rescale grayscale map for visualization"""
     use_colormap_for_grayscale: bool = True
     """Use colormap for grayscale images"""
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
@@ -56,12 +58,13 @@ class MultiDimensionViewer(object):
         self.width = int(cfg.width * self.scale)
         self.height = int(cfg.height * self.scale)
         self.nav_pos = [int(self.width-(262+30)*self.scale), 10*self.scale]
+        self.filter_percentile = cfg.filter_percentile
         self.rescale_grayscale = cfg.rescale_grayscale
         self.use_colormap_for_grayscale = cfg.use_colormap_for_grayscale
         self.verbose = cfg.verbose
 
         # files types
-        self.types_image = ['jpg', 'jpeg', 'png', 'flo5', 'dsp5']
+        self.types_image = ['jpg', 'jpeg', 'png', 'flo5', 'dsp5', 'npy']
         self.types_mesh = ['obj', 'glb', 'ply']
         self.types_container = ['npz']
         # self.types_txt = ['txt', 'json', 'csv', 'sh']
@@ -771,8 +774,15 @@ class MultiDimensionViewer(object):
             print(f"Load image: {path}")
 
         suffix = path.suffix[1:].lower()
-        if suffix in ['dsp5', 'flo5']:
-            if suffix == 'dsp5':
+        if suffix in ['dsp5', 'flo5', 'npy']:
+            if suffix == 'npy':
+                img = np.load(path)
+                if self.filter_percentile is not None:
+                    threshold = np.percentile(img, self.filter_percentile)
+                    if self.verbose:
+                        print(f"Filter npy image with percentile {self.filter_percentile}, threshold: {threshold}")
+                    img[img > threshold] = 0
+            elif suffix == 'dsp5':
                 with h5py.File(path, "r") as f:
                     if "disparity" not in f.keys():
                         raise IOError(f"File {path} does not have a 'disparity' key. Is this a valid dsp5 file?")
