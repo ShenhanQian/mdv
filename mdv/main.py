@@ -653,8 +653,8 @@ class MultiDimensionViewer(object):
         except Exception as e:
             print(f"Error: {e}")
             img = np.zeros([self.height, self.width, 4])
-            self.need_update = True
-            self.io_busy = True
+            self.need_update = False
+            self.io_busy = False
 
         # pad
         self.viewer_img = img
