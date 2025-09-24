@@ -33,9 +33,9 @@ class MultiDimensionViewerConfig:
     """Include files with these suffixes"""
     filter_percentile: Optional[float] = None
     """Filter image values by percentile, e.g., 99"""
-    rescale_grayscale: bool = True
+    normalize_grayscale: bool = True
     """Rescale grayscale map for visualization"""
-    use_colormap_for_grayscale: bool = True
+    apply_colormap: bool = False
     """Use colormap for grayscale images"""
     verbose: Annotated[bool, tyro.conf.arg(aliases=["-v"])] = False
     """Verbose mode"""
@@ -59,8 +59,8 @@ class MultiDimensionViewer(object):
         self.height = int(cfg.height * self.scale)
         self.nav_pos = [int(self.width-(262+30)*self.scale), 10*self.scale]
         self.filter_percentile = cfg.filter_percentile
-        self.rescale_grayscale = cfg.rescale_grayscale
-        self.use_colormap_for_grayscale = cfg.use_colormap_for_grayscale
+        self.normalize_grayscale = cfg.normalize_grayscale
+        self.apply_colormap = cfg.apply_colormap
         self.verbose = cfg.verbose
 
         # files types
@@ -521,14 +521,14 @@ class MultiDimensionViewer(object):
                 if self.verbose:
                     print(f"Camera reset")
             elif self.mode == 'image':
-                self.rescale_grayscale = not self.rescale_grayscale
+                self.normalize_grayscale = not self.normalize_grayscale
                 if self.verbose:
-                    print(f"Rescale grayscale: {self.rescale_grayscale}")
+                    print(f"Rescale grayscale: {self.normalize_grayscale}")
         elif sender == '_mvKey_C':
             if self.mode == 'image':
-                self.use_colormap_for_grayscale = not self.use_colormap_for_grayscale
+                self.apply_colormap = not self.apply_colormap
                 if self.verbose:
-                    print(f"Use colormap for grayscale: {self.use_colormap_for_grayscale}")
+                    print(f"Use colormap for grayscale: {self.apply_colormap}")
         elif sender == '_mvKey_Open_Brace':
             if self.mode == 'mesh':
                 self.light_intensity /= 2
@@ -584,6 +584,7 @@ class MultiDimensionViewer(object):
                     img = self.prefetch_cache[path]
                 else:
                     img = self.load_image(path)
+                img = self.process_image(img)
             elif suffix in self.types_mesh:
                 self.set_mode('mesh')
                 dpg.configure_item("image_tag", show=True)
@@ -804,37 +805,37 @@ class MultiDimensionViewer(object):
             img = Image.fromarray(img)
         else:
             img = Image.open(path)
+        return img
 
+    def process_image(self, img):
         if self.verbose:
             print(f"Image mode: {img.mode}")
 
-        if img.mode == 'RGB':  # RGB
+        if img.mode in ['RGB', 'P']:  # RGB, Palette
             img = np.array(img.convert('RGBA'))
-        elif img.mode == 'I;16':  # 16-bit grayscale
-            img = np.array(img, dtype=np.uint16)
-            if self.rescale_grayscale:
-                img = img / img.max()  # for visualization
-            else:
+        else:  # Grayscale or other modes
+            if img.mode == 'I;16':  # 16-bit grayscale
+                img = np.array(img, dtype=np.uint16)
                 img = img / 65535.0  # Normalize to [0, 1]
-            if self.use_colormap_for_grayscale:
+            elif img.mode == 'L':  # 8-bit grayscale
+                img = np.array(img, dtype=np.uint8)
+                img = img / 255
+            elif img.mode == 'F':  # 32-bit float grayscale
+                img = np.array(img, dtype=np.float32)
+            elif img.mode == '1':  # 1-bit binary
+                img = np.array(img, dtype=np.uint8)
+            else:
+                # raise ValueError(f"Unsupported image mode: {img.mode}")
+                print(f"Unlisted image mode: {img.mode}")
+                img = np.array(img)
+            
+            if self.normalize_grayscale:
+                img = img / (img.max() + 1e-6)  # for visualization
+            if self.apply_colormap:
                 from matplotlib import cm
                 cmap = cm.get_cmap("viridis")
                 img = cmap(img)
             img = (img * 255).astype(np.uint8)
-        elif img.mode == 'L':  # 8-bit grayscale
-            img = np.array(img, dtype=np.uint8)
-            img = img / img.max() * 255
-        elif img.mode == 'P':  # Palette
-            img = np.array(img.convert('RGBA'))
-        elif img.mode == 'F':  # 32-bit float grayscale
-            img = np.array(img, dtype=np.float32)
-            img = (img / (img.max() + 1e-6) * 255).astype(np.uint8)
-        elif img.mode == '1':  # 1-bit binary
-            img = np.array(img, dtype=np.uint8) * 255
-        else:
-            # raise ValueError(f"Unsupported image mode: {img.mode}")
-            print(f"Unlisted image mode: {img.mode}")
-            img = np.array(img)
 
         img_h, img_w = img.shape[:2]
         scale = min(self.height / img_h, self.width / img_w)
